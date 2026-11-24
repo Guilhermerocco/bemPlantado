@@ -1,215 +1,181 @@
-# 🌱 Bem Plantado — API
+# BemPlantado.
 
-API em Flask do projeto **Bem Plantado** (Projeto Integrado — Tecnologia em Ciência de Dados, Faculdade SENAI São Caetano do Sul).
+Acompanhe suas plantas: o sistema mostra como está o ambiente, avisa **quando regar** e mostra a **previsão dos próximos 7 dias**. Feito para ser simples de ler e usar (letras grandes, alto contraste, botão "Ouvir" que lê o aviso em voz alta).
 
-Ela junta três fontes de dados para ajudar a cuidar de plantas:
-
-- **Sensores (MQTT):** uma caixa com sensores publica temperatura, umidade, pressão, CO₂ e partículas. A API escuta o tópico e grava cada leitura no MySQL.
-- **Identificação por foto ([Pl@ntNet](https://my.plantnet.org/)):** o usuário envia a foto de uma planta e o reconhecimento de imagem devolve a espécie e a confiança.
-- **Dados de cultivo ([Trefle](https://trefle.io/)):** com a espécie identificada, a API busca a faixa de temperatura, a umidade, a luz e o pH ideais.
-
-Com tudo isso, a API **compara a faixa ideal da planta com a última leitura dos sensores** e devolve uma análise: temperatura e umidade dentro, acima ou abaixo do ideal, junto com dicas de rega, luz e toxicidade.
+## Estrutura da pasta
 
 ```
- Foto ──► Pl@ntNet ──► espécie ──► Trefle ──► faixa ideal ─┐
-                                                           ├──► análise ──► MySQL ──► site
- Sensores ──► MQTT ──► tabela registro ──► última leitura ─┘
+BemPlantado/
+├── app.py                  entrada: API Flask + serve o site (é o que a Vercel executa)
+├── requirements.txt        dependências do Python
+├── .env.example            modelo das variáveis (copie para .env; nunca publique o .env)
+├── bemplantado/            código do sistema
+│   ├── models.py             tabelas (registro, planta, rega, grupo_planta, usuario…)
+│   ├── fontes.py             fonte dos dados do sensor: simulada | mqtt | nenhuma
+│   ├── ingestao.py           recebe, valida e grava as mensagens MQTT da caixinha
+│   ├── grupos.py             os 15 grupos de plantas
+│   ├── recomendacao.py       regra do aviso de rega
+│   ├── servicos.py           Open-Meteo, Pl@ntNet e Trefle
+│   ├── texto.py              busca sem acento
+│   ├── contas.py             cadastro, login, sessão, perfil e favoritos
+│   ├── escutador.py          fica ligado, assina o MQTT e grava as leituras da caixinha no banco
+│   └── simulador.py          publica leituras fictícias pelo MQTT (só para testar)
+├── banco/                  scripts SQL: schema.sql (PostgreSQL), ddl_supabase.sql, schema_sqlite.sql, exemplos
+├── testes/                 testes do fluxo MQTT → banco → API
+├── static/                 o site
+│   ├── index.html            página principal
+│   ├── css/  js/             estilos e scripts (app.js, cena3d.js, piscada.js, enfeites.js…)
+│   ├── paginas/              /realista, /identidade e /pitch (o pitch de 5 minutos em slides)
+│   ├── versoes/              versões anteriores do site (/v1, /v2, /v3)
+│   └── marca/ mascote/ fotos/ vendor/   imagens, logos, mascote e bibliotecas
+├── api-mysql/              primeira versão da API (Flask + MySQL, do Guilherme): CRUD das tabelas, MQTT, Pl@ntNet e Trefle; guardada como referência
+├── docs/                   documentação (DOCUMENTACAO, diretrizes da atividade, PDF do MVP 2, CONTEXTO.md com o histórico)
 ```
 
----
+## Fluxo
 
-## Tecnologias
+```
+caixinha (sensores) → MQTT → bemplantado/ingestao.py → banco (SQLite) → API Flask → dashboard (static/)
+                                                          ↘ Pl@ntNet · Trefle · Open-Meteo
+```
 
-| Camada | Ferramentas |
-|---|---|
-| API | Python, Flask, Flask-CORS |
-| Banco | MySQL 8, SQLAlchemy, PyMySQL |
-| IoT | MQTT (paho-mqtt) |
-| IA / dados externos | Pl@ntNet API (reconhecimento de imagem), Trefle API |
-| Deploy | Azure App Service (porta via `PORT`) |
-
----
-
-## Arquivos
-
-| Arquivo | O que é |
-|---|---|
-| `app.py` | A API: modelos, rotas, integração MQTT, Pl@ntNet e Trefle |
-| `requirements.txt` | Dependências Python |
-| `bemPlantado.sql` | DDL: cria o banco e todas as tabelas (pode rodar num banco que já existe, porque só cria o que faltar) |
-
----
+O dashboard só lê dados por `/api/...`; nunca acessa o banco direto.
 
 ## Como rodar
 
-### 1. Banco de dados
-
 ```bash
-mysql -u root -p < bemPlantado.sql
-```
-
-### 2. Dependências
-
-```bash
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Linux/Mac
 pip install -r requirements.txt
+cp .env.example .env        # preencha as chaves (opcional para testar)
+python app.py               # abre em http://localhost:8080
 ```
 
-### 3. Variáveis de ambiente
+## Ligar a caixinha (escutador)
 
-As senhas e chaves **nunca** ficam no código. Defina:
+O site publicado só **lê** o banco; quem grava as leituras é o escutador, que precisa ficar rodando num computador ligado (a Vercel não mantém conexão MQTT).
 
-| Variável | Obrigatória | Exemplo |
-|---|---|---|
-| `DATABASE_URL` | sim | `mysql+pymysql://root:SUA_SENHA@localhost/bemPlantado` |
-| `PLANTNET_API_KEY` | para identificar fotos | chave gerada em my.plantnet.org |
-| `TREFLE_TOKEN` | para dados de cultivo | token gerado em trefle.io |
-| `MQTT_BROKER` | não | `test.mosquitto.org` (padrão) |
-| `MQTT_PORT` | não | `1883` (padrão) |
-| `MQTT_TOPIC` | não | `projeto_integrado/SENAI134/Cienciadedados/grupoX` |
-| `PORT` | não | `8080` (o Azure define sozinho) |
+1. No `.env`: `MQTT_TOPIC` com o tópico do grupo (troque `GrupoX`), `MQTT_BROKER`/`MQTT_PORT` e `DATABASE_URL` (o mesmo do site).
+2. Na pasta do projeto: `python -m bemplantado.escutador`
+3. Deixe a janela aberta. A cada 30 s ele mostra se está conectado e quantas leituras recebeu/gravou. Ao subir, troca a fonte para "mqtt" (apaga uma vez as leituras fictícias; as plantas ficam).
+4. Confira: `https://bemplantado.vercel.app/api/registros/ultimo` deve mostrar a leitura nova.
 
-> Se a senha tiver `@`, troque por `%40` na `DATABASE_URL`.
+Mensagens sem `timestamp` são ignoradas, repetidas (mesmo instante) também, e campos ausentes ficam vazios.
 
-**Windows (PowerShell):**
-```powershell
-$env:DATABASE_URL="mysql+pymysql://root:SUA_SENHA@localhost/bemPlantado"
-$env:PLANTNET_API_KEY="sua_chave"
-$env:TREFLE_TOKEN="seu_token"
-```
+## Contas de usuário
 
-**Azure:** em *App Service → Configuração → Configurações de aplicativo*.
+Qualquer pessoa pode **criar uma conta** (nome, e-mail e senha; telefone e CPF são opcionais e só no perfil) e **entrar**. Quem não entrou vê só as plantas de exemplo; cada conta vê, cadastra, rega e remove apenas as **suas** plantas, e marca **grupos favoritos** (tabela `favorito`).
 
-### 4. Subir a API
+- Código: `bemplantado/contas.py` (rotas `/api/conta/...`, `/api/favoritos/...`) e `static/js/contas.js` (telas).
+- Senha só como hash (`usuario.senha_hash`). Sessão em cookie assinado (HttpOnly, SameSite=Lax, Secure na Vercel) que exige a variável **`SECRET_KEY`** (a mesma em todas as instâncias; gere com `python -c "import secrets; print(secrets.token_hex(32))"`).
+- Proteções: limite de tentativas de login (5 por e-mail e 20 por IP em 15 min, tabela `tentativa_login`), mensagem igual para e-mail inexistente e senha errada, bloqueio de pedidos vindos de outros sites (Origin), respostas de conta sem cache, CPF validado e nunca devolvido inteiro.
+- Ainda não tem: recuperar senha por e-mail e confirmação de e-mail. Quem está logada troca a senha em "Minha conta".
+- Testes: `python -m unittest testes.test_contas` (usa banco temporário).
 
-```bash
-python app.py
-```
+## Fonte dos dados do sensor (simulada hoje, real depois)
 
-A API sobe em `http://localhost:8080` e já começa a escutar o MQTT. Para conferir se está tudo conectado, abra `GET /status`.
+Quem decide de onde vêm as leituras é **uma linha do `.env`**: `FONTE_DADOS`.
 
----
-
-## Endpoints
-
-### Plantas (Pl@ntNet + Trefle)
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `POST` | `/plantas/identificar` | Identifica a planta pela foto e gera a análise |
-| `GET` | `/plantas/info?nome=<nome científico>` | Dados de cultivo da Trefle |
-| `GET` | `/plantas/analise/<id>` | Refaz a análise de uma identificação com a leitura mais recente dos sensores |
-| `GET` | `/identificacoes` | Histórico (filtro opcional `?usuario_id=1`) |
-| `GET` | `/identificacoes/<id>` | Uma identificação |
-| `DELETE` | `/identificacoes/<id>` | Remove uma identificação |
-
-#### `POST /plantas/identificar`
-
-Envio em `multipart/form-data`:
-
-| Campo | Obrigatório | Descrição |
-|---|---|---|
-| `imagens` | sim | 1 a 5 fotos JPG/PNG (repita o campo para cada foto, máx. 25 MB no total) |
-| `orgaos` | não | Um por foto: `auto`, `leaf`, `flower`, `fruit`, `bark` (padrão: `auto`) |
-| `usuario_id` | não | Liga a identificação a um usuário |
-| `grupo_id` | não | Força um grupo de planta; sem ele, a API tenta achar pelo nome |
-| `salvar` | não | `false` para não gravar no banco |
-
-```bash
-curl -X POST http://localhost:8080/plantas/identificar \
-  -F "imagens=@folha.jpg" \
-  -F "orgaos=leaf" \
-  -F "usuario_id=1"
-```
-
-Do site (JavaScript):
-```js
-const form = new FormData();
-form.append("imagens", inputFoto.files[0]);
-form.append("usuario_id", 1);
-const resp = await fetch(`${API_URL}/plantas/identificar`, { method: "POST", body: form });
-const dados = await resp.json();
-```
-
-Resposta (resumida):
-```json
-{
-  "identificacao": {
-    "id": 1,
-    "planta": {
-      "nome_cientifico": "Monstera deliciosa",
-      "nome_comum": "Costela-de-adão",
-      "familia": "Araceae",
-      "genero": "Monstera",
-      "confianca": 0.91
-    },
-    "candidatos": [ "...até 3 espécies prováveis..." ],
-    "trefle": {
-      "crescimento": { "temp_min_c": 15, "temp_max_c": 30, "umidade_ar_0a10": 7, "luz_0a10": 5, "ph_min": 5.5, "ph_max": 7 }
-    },
-    "analise": {
-      "temperatura": { "status": "acima", "atual": 33.0, "ideal": [15, 30], "mensagem": "Temperatura de 33.0°C está acima do ideal (15–30°C)" },
-      "umidade":     { "status": "ok", "atual": 60.0, "ideal": [55, 85], "mensagem": "Umidade do ar de 60.0% está dentro do ideal" },
-      "grupo": { "id": 1, "nome": "Tropicais" },
-      "dicas": ["Regar a cada 3 dia(s)", "Prefere luz indireta ou meia-sombra", "Atenção: toxicidade baixa (cuidado com pets e crianças)"]
-    },
-    "identificacoes_restantes_hoje": 497
-  }
-}
-```
-
-`status` pode ser `ok`, `acima`, `abaixo` ou `sem_dados`.
-
-**Erros comuns:** `400` (sem foto ou formato inválido), `404` (nenhuma planta reconhecida), `413` (fotos grandes demais), `429` (limite diário da Pl@ntNet), `502` (API externa fora do ar ou chave inválida).
-
-### Sensores e diagnóstico
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/status` | Situação do MQTT e do banco (total e último registro) |
-| `GET` | `/registros/ultimo` | Leitura mais recente |
-| `GET/POST` | `/registros` | Lista / cria leituras |
-| `GET/PUT/DELETE` | `/registros/<id>` | Uma leitura |
-
-Formato esperado da mensagem MQTT:
-```json
-{ "temperature": 25.3, "pressure": 1012.4, "altitude": 760, "humidity": 58.1,
-  "CO2": 420, "particula1": 12, "particula2": 18, "timestamp": 1763500000 }
-```
-O `timestamp` pode vir em segundos ou milissegundos. Se não vier, a API usa a hora do servidor. Leituras repetidas (com o mesmo timestamp) são ignoradas.
-
-### Cadastros (CRUD)
-
-| Recurso | Rotas |
+| Valor | O que faz |
 |---|---|
-| Usuários | `GET/POST /usuarios` · `GET/PUT/DELETE /usuarios/<id>` (a senha é salva como hash) |
-| Grupos de planta | `GET/POST /grupos_planta` · `GET/PUT/DELETE /grupos_planta/<id>` |
-| Favoritos | `GET/POST /favoritos` · `GET/DELETE /favoritos/<usuario_id>/<grupo_id>` |
-| Insights | `GET/POST /insights` · `GET/PUT/DELETE /insights/<id>` |
+| `simulada` (padrão) | O próprio app gera leituras fictícias: preenche as últimas `SIM_HISTORICO_HORAS` horas e depois grava uma leitura a cada `SIM_INTERVALO_SEG` segundos. Não precisa de broker nem de internet. O dashboard mostra o selo "Dados de demonstração". |
+| `mqtt` | Recebe da caixinha real pelo broker (`MQTT_BROKER`, `MQTT_TOPIC`). |
+| `nenhuma` | Não inicia fonte nenhuma. |
 
----
+`SIM_CENARIO` (`normal`, `calor`, `frio`, `seco`) força um ambiente para demonstrar os alertas e os avisos de rega.
 
-## Como a análise funciona
+**Para ligar o sensor real:** coloque `FONTE_DADOS=mqtt`, ajuste `MQTT_TOPIC` e reinicie. Nada mais muda: API, dashboard e regras de rega leem do mesmo banco.
+Na primeira partida com `mqtt`, o app **apaga as leituras fictícias** (as plantas ficam) para nunca misturar dado de mentira com dado real. O contrário é bloqueado: se o banco já tem leituras reais, a fonte simulada não inicia (use outro `DATABASE_URL` para demonstrar).
 
-1. **Faixa ideal de temperatura e umidade:** usa primeiro o `grupo_planta` cadastrado pela equipe, que é a fonte mais confiável. Se a planta não tiver grupo, usa os dados da Trefle. A umidade da Trefle vem numa escala de 0 a 10 e é convertida para uma faixa em % estimada.
-2. **Grupo automático:** se o `grupo_id` não for enviado, a API procura um grupo cujo campo `exemplos` cite o nome comum, o gênero ou a família da planta. Por isso vale escrever bem os `exemplos` (por exemplo: `"Monstera, costela-de-adão, jiboia"`).
-3. **Comparação:** a faixa ideal é cruzada com a última leitura da tabela `registro`.
-4. **Dicas:** intervalo de rega e dica do grupo, além de luz, pH e toxicidade vindos da Trefle.
+Toda fonte entrega o mesmo formato de mensagem da caixinha para `bemplantado/ingestao.processar_payload`, que valida e grava. Para criar outra fonte (serial/USB, HTTP…), escreva `iniciar_xxx(app)` em `fontes.py` e registre em `FONTES`.
 
-> ⚠️ A Trefle tem dados de cultivo preenchidos para uma parte pequena das espécies. Quando faltam dados, o campo volta como `sem_dados`. Cadastrar bons grupos de planta melhora muito a análise.
+`bemplantado/simulador.py` é opcional (rode `python -m bemplantado.simulador`): publica leituras fictícias **pelo MQTT**, só para testar o caminho MQTT antes de ter a caixinha.
 
----
+Sem chaves de API, o sistema funciona normalmente: os cuidados e a rega vêm dos **grupos de plantas** (`bemplantado/grupos.py`, no banco) e a previsão do tempo funciona (Open-Meteo não precisa de chave). Sem as chaves, só ficam indisponíveis a referência botânica extra (Trefle) e a identificação por foto (Pl@ntNet, desligada na tela).
 
-## Limites das APIs gratuitas
+## Deploy na Vercel
 
-- **Pl@ntNet:** cerca de 500 identificações por dia no plano gratuito (o número restante volta em `identificacoes_restantes_hoje`).
-- **Trefle:** 60 requisições por minuto.
+O projeto já está vinculado (`.vercel/`). Para publicar de novo depois de mudar o código:
 
----
+```bash
+vercel deploy -y --scope arthur-513c          # preview (exige login na Vercel para abrir)
+vercel deploy --prod -y --scope arthur-513c   # produção (link público)
+```
 
-## Autor
+As chaves (`PLANTNET_API_KEY`, `TREFLE_TOKEN`) e as opções (`FONTE_DADOS`, `LATITUDE`…) ficam em *Settings → Environment Variables* do projeto, nunca no código. O `.vercelignore` impede o envio do `.env`.
 
-**Guilherme Ribeiro Rocco** — Tecnologia em Ciência de Dados, Faculdade SENAI São Caetano do Sul
-[LinkedIn](https://linkedin.com/in/guilherme-rocco)
+**Como a Vercel muda o funcionamento** (ela é *serverless*: não há processo ligado o tempo todo nem disco permanente):
+- Fonte simulada: as leituras fictícias são geradas **a cada acesso à API**, numa grade de 5 min (não há thread em segundo plano).
+- Fonte `mqtt` **não funciona** na Vercel (precisa de conexão aberta o tempo todo). Para a caixinha real, o app de ingestão deve rodar em um servidor comum (Azure, Railway, Render…) gravando no mesmo banco, ou a caixinha envia por HTTP para a API.
+- Banco: sem `DATABASE_URL`, usa SQLite em `/tmp`, que **some e pode diferir entre instâncias** (plantas adicionadas podem sumir). O app semeia 3 plantas de exemplo quando o banco está vazio. Para guardar de verdade, crie um Postgres (ex.: Neon, pela aba *Storage* da Vercel) e defina `DATABASE_URL`; o código já aceita.
+
+## Integrações externas
+
+| Serviço | Para quê | Chave |
+|---|---|---|
+| [Pl@ntNet](https://my.plantnet.org/doc/getting-started/introduction) | Descobrir a espécie a partir de uma foto (desligado na tela por enquanto) | `PLANTNET_API_KEY` |
+| [Trefle](https://trefle.io) | Referência botânica **extra** no cadastro (não define a rega) | `TREFLE_TOKEN` |
+| [Open-Meteo](https://open-meteo.com) | Previsão de chuva e temperatura (7 dias) | não precisa |
+
+As chaves ficam só no servidor (`.env`, que não vai para o repositório). Confira as cotas e os termos de uso de cada plano gratuito antes da apresentação.
+
+## Como o aviso de rega é calculado (`bemplantado/recomendacao.py`)
+
+A caixinha mede a umidade do **ar**, não a da terra. Então o cálculo parte do intervalo de rega do **grupo** da planta e ajusta:
+
+- mais quente que o ideal → rega mais cedo (×0,75); mais frio → mais tarde (×1,25)
+- ar mais seco que o ideal → rega mais cedo (×0,85)
+- planta de varanda/jardim: se a chuva prevista no dia da rega for ≥ 5 mm, adia
+- o botão **Reguei hoje** reinicia a contagem
+
+Todo o sistema parte dos **15 grupos de plantas** (cactos, suculentas, samambaias…). Ao cadastrar, a pessoa escolhe o grupo (pelo nome da planta ou pela lista) e os valores de referência do grupo (intervalo de rega, faixa de temperatura, umidade do ar mínima) são copiados para a planta. Esses números são **aproximados e devem ser validados pela equipe**; ficam em `grupos.py`. A fonte aparece em cada cartão ("Grupo: …"). O Trefle só acrescenta uma linha de referência botânica no cadastro, quando existe dado.
+
+## API
+
+| Rota | Descrição |
+|---|---|
+| `GET /api/registros?inicio=&fim=&limite=` | Leituras do sensor no período (ISO 8601, UTC). Padrão: últimas 24 h |
+| `GET /api/registros/ultimo` | Última leitura, idade em minutos e se está desatualizada (> 60 min) |
+| `GET /api/mqtt/status` | Situação da ligação com o MQTT: conectado, tópico e quantas mensagens foram recebidas, gravadas e ignoradas |
+| `GET /api/previsao` | Previsão de 7 dias (Open-Meteo) |
+| `GET /api/grupos` | Os 15 grupos de plantas, com cuidados, exemplos e valores de referência |
+| `GET /api/grupos/buscar?q=` | Busca o grupo pelo nome popular de uma planta (ex.: "jiboia" → 2 grupos) |
+| `GET /api/referencia-botanica?q=` | Informação extra do Trefle, quando existir (`{}` caso contrário) |
+| `POST /api/identificar` | Foto (`imagem`, multipart) → até 3 espécies (Pl@ntNet). Pronta no servidor, mas **desligada na tela por enquanto** |
+| `GET /api/plantas` | Plantas com situação de rega e do ambiente |
+| `POST /api/plantas` | Cria planta: `apelido`, `grupo_id` (**obrigatório**), `nome_popular`, `ambiente` (`interno`/`externo`), `dias_desde_rega` |
+| `POST /api/plantas/<id>/regar` | Marca como regada hoje |
+| `DELETE /api/plantas/<id>` | Remove a planta |
+
+## Banco de dados
+
+Tabela `registro` (nomes exigidos pelo projeto): `id`, `temperature` (°C), `pressure` (hPa), `altitude` (m), `humidity` (% do ar), `CO2` (ppm), `particula1`, `particula2` (µg/m³), `registro_tempo` (UTC, **único**: mensagem repetida para o mesmo instante é ignorada). Valores ausentes ficam `NULL`. O `timestamp` do MQTT vira `registro_tempo`.
+Tabelas do sistema: `grupo_planta` (15 grupos) e `grupo_exemplo` (nomes populares), `planta` (cada uma com um `grupo_id`) e `rega`. Bancos criados antes dos grupos são atualizados sozinhos na partida (a coluna `planta.grupo_id` é acrescentada; nada é apagado). A modelagem completa está em `DOCUMENTACAO.md`.
+
+**DDL (MVP 2):** o esquema completo, com o modelo do projeto (`registro`, `grupo_planta`, `usuario`, `favorito`, `insight`) e as tabelas de apoio, está em `banco/`:
+
+| Arquivo | Para quê |
+|---|---|
+| `banco/schema.sql` | DDL para **PostgreSQL**, comentado (unidades, valores ausentes, duplicados) |
+| `banco/schema_sqlite.sql` | O mesmo DDL para **SQLite** (`sqlite3 bemplantado.db < banco/schema_sqlite.sql`) |
+| `banco/exemplos.sql` | Exemplos de registros e consultas (por período, última leitura, médias, alerta de umidade) |
+| `banco/validar_ddl.py` | Roda o DDL e os exemplos e confere se batem com o código (`python banco/validar_ddl.py`) |
+
+O app cria as mesmas tabelas sozinho na partida (`db.create_all`); bancos antigos são atualizados (colunas `dica_base`, `exemplos` e `umid_max` de `grupo_planta`).
+
+## MQTT
+
+Usado quando `FONTE_DADOS=mqtt`. Tópico e broker em `.env` (`MQTT_TOPIC`, `MQTT_BROKER`). Troque `GrupoX` pelo nome do grupo. O broker `test.mosquitto.org` é público e sem senha: use um tópico específico do grupo e não envie dados sensíveis.
+
+O arquivo original `mqtt.py` está em `referencia-professora/` (só referência); a versão funcional está em `bemplantado/ingestao.py`.
+
+**Como a API se liga ao MQTT:** `iniciar_mqtt` (em `bemplantado/ingestao.py`) conecta em segundo plano e assina o tópico; cada mensagem JSON passa por `processar_payload`, que valida, converte `timestamp` em `registro_tempo` e grava em `registro` (duplicado e mensagem inválida são ignorados sem derrubar nada). A API lê desse mesmo banco (`/api/registros`) e o dashboard só fala com a API. Para ver o fluxo funcionando: `FONTE_DADOS=mqtt python app.py`, em outro terminal `python simulador.py`, e abra `GET /api/mqtt/status` e `GET /api/registros/ultimo`.
+
+**Testes (sem internet e sem broker):** `python -m unittest testes.test_mqtt_api -v` entrega mensagens ao mesmo tratador do cliente MQTT e confere banco e API (nomes dos campos, período, duplicado, campos ausentes, mensagens inválidas, status).
+
+## Limitações conhecidas
+
+- Os valores de cada grupo são aproximados, e uma espécie pode precisar de algo diferente do grupo; na dúvida, toque a terra com o dedo antes de regar.
+- Notificações do navegador só chegam com a página aberta. E-mail/WhatsApp ficam como próxima etapa.
+- A identificação por foto (Pl@ntNet) e a busca no Trefle precisam das chaves para serem testadas de ponta a ponta.
+
+## Mascote
+A pose do topo muda conforme as plantas (`desenharHero` em `static/js/app.js`); as imagens estão em `static/mascote/`. O movimento respeita `prefers-reduced-motion`.

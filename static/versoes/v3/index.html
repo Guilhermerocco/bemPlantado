@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BemPlantado.</title>
+  <meta name="description" content="Acompanhe suas plantas: quando regar e a previsão dos próximos dias.">
+  <link rel="icon" type="image/svg+xml" href="/static/marca/favicon.svg">
+  <link rel="alternate icon" href="/static/marca/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/versoes/v3/styles.css">
+  <script>document.documentElement.classList.add("abrindo");</script>
+  <noscript><style>#abertura { display: none !important; } html.abrindo, html.abrindo body { overflow: auto; }</style></noscript>
+</head>
+<body>
+  <div id="abertura" class="abertura" aria-hidden="true">
+    <div class="ab-logo">
+      <img class="ab-texto" src="/static/marca/abertura-texto.png" alt="" width="1200" height="546">
+      <span class="ab-folha-pos"><img class="ab-folha" src="/static/marca/abertura-folha.png" alt="" width="243" height="270"></span>
+    </div>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="ab-grad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0B4C37"/><stop offset=".6" stop-color="#0F5A43"/><stop offset="1" stop-color="#14664C"/></linearGradient></defs></svg>
+    <svg class="ab-painel esq" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M0 0H88C97 12 82 26 93 42C100 54 83 70 94 84C99 92 91 97 97 100H0Z" fill="url(#ab-grad)"/><path d="M0 50H90" class="ab-nerv"/><path d="M14 50Q27 34 42 25M14 50Q27 66 42 75M30 50Q44 31 60 18M30 50Q44 69 60 82M46 50Q60 30 76 14M46 50Q60 70 76 86M62 50Q74 36 88 24M62 50Q74 64 88 76" class="ab-nerv fina"/><path d="M88 0C97 12 82 26 93 42C100 54 83 70 94 84C99 92 91 97 97 100" class="ab-borda"/></svg>
+    <svg class="ab-painel dir" viewBox="0 0 100 100" preserveAspectRatio="none"><g transform="translate(100 0) scale(-1 1)"><path d="M0 0H88C97 12 82 26 93 42C100 54 83 70 94 84C99 92 91 97 97 100H0Z" fill="url(#ab-grad)"/><path d="M0 50H90" class="ab-nerv"/><path d="M14 50Q27 34 42 25M14 50Q27 66 42 75M30 50Q44 31 60 18M30 50Q44 69 60 82M46 50Q60 30 76 14M46 50Q60 70 76 86M62 50Q74 36 88 24M62 50Q74 64 88 76" class="ab-nerv fina"/><path d="M88 0C97 12 82 26 93 42C100 54 83 70 94 84C99 92 91 97 97 100" class="ab-borda"/></g></svg>
+  </div>
+  <a class="pular" href="#plantas">Ir para as minhas plantas</a>
+
+  <header class="hero">
+    <img class="deco-folha d1" src="/static/marca/elemento-folha-lima.svg" alt="">
+    <img class="deco-folha d2" src="/static/marca/elemento-folha-lima.svg" alt="">
+    <svg class="folhagem" viewBox="0 0 500 640" aria-hidden="true">
+      <defs>
+        <linearGradient id="gEsc" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#0d5a3d"/><stop offset="1" stop-color="#1f9a62"/></linearGradient>
+        <linearGradient id="gEsc2" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#157a52"/><stop offset="1" stop-color="#43c07a"/></linearGradient>
+        <linearGradient id="gMed" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4bbf6e"/><stop offset="1" stop-color="#14754d"/></linearGradient>
+        <linearGradient id="gClara" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2f9a62"/><stop offset=".55" stop-color="#5fbf68"/><stop offset="1" stop-color="#8fd96e"/></linearGradient>
+        <linearGradient id="gClara2" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2d9560"/><stop offset="1" stop-color="#a7e46e"/></linearGradient>
+      </defs>
+
+      <g class="fo" style="--ox:150px;--oy:640px;--t:7.5s;--d:-1s;--c:.05s;--g:2deg">
+        <path d="M120 640C86 520 92 400 140 300C176 226 196 150 226 82C238 54 250 30 262 10C268 74 262 150 250 214C238 280 214 352 196 430C182 500 168 570 150 640Z" fill="url(#gEsc)"/>
+        <path d="M262 10C268 74 262 150 250 214C238 280 214 352 196 430C182 500 168 570 150 640C168 560 184 470 204 380C224 290 246 190 262 10Z" fill="url(#gEsc2)" opacity=".85"/>
+        <path d="M140 640C150 520 190 380 262 10" stroke="#7fe0a0" stroke-width="2.4" fill="none" opacity=".5" stroke-linecap="round"/>
+        <g stroke="rgba(255,255,255,.22)" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M159 506Q147 502 135 494"/><path d="M159 506Q172 502 184 494"/><path d="M171 452Q159 448 148 440"/><path d="M171 452Q182 448 194 440"/><path d="M182 399Q172 395 161 387"/><path d="M182 399Q193 395 204 387"/><path d="M194 345Q184 341 174 333"/><path d="M194 345Q203 341 213 333"/><path d="M205 291Q196 287 187 280"/><path d="M205 291Q214 287 223 280"/><path d="M216 237Q208 233 200 227"/><path d="M216 237Q225 233 233 227"/><path d="M228 183Q220 179 213 173"/><path d="M228 183Q235 179 243 173"/><path d="M239 130Q232 126 226 120"/><path d="M239 130Q246 126 253 120"/><path d="M251 76Q245 72 239 66"/><path d="M251 76Q257 72 263 66"/></g>
+      </g>
+
+      <g class="fo" style="--ox:30px;--oy:640px;--t:8.6s;--d:-3s;--c:.2s;--g:1.6deg">
+        <path d="M-12 640C-24 520 -18 360 4 220C14 160 28 110 50 70C70 150 86 250 96 350C104 430 100 520 70 640Z" fill="url(#gMed)"/>
+        <path d="M50 70C70 150 86 250 96 350C104 430 100 520 70 640C80 520 74 400 62 290C54 220 50 140 50 70Z" fill="#0f6642" opacity=".55"/>
+        <path d="M30 640C30 520 36 280 50 80" stroke="#b9f0c6" stroke-width="2" fill="none" opacity=".4" stroke-linecap="round"/>
+        <g stroke="rgba(255,255,255,.22)" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M34 508Q25 504 15 499"/><path d="M34 508Q43 504 53 499"/><path d="M36 457Q27 453 19 448"/><path d="M36 457Q45 453 53 448"/><path d="M38 405Q30 401 22 396"/><path d="M38 405Q46 401 54 396"/><path d="M40 354Q33 350 25 345"/><path d="M40 354Q47 350 55 345"/><path d="M42 302Q35 298 29 294"/><path d="M42 302Q49 298 55 294"/><path d="M44 251Q38 247 32 243"/><path d="M44 251Q50 247 56 243"/><path d="M46 199Q41 195 35 191"/><path d="M46 199Q51 195 57 191"/><path d="M48 148Q43 144 39 140"/><path d="M48 148Q53 144 57 140"/></g>
+      </g>
+
+      <g class="fo" style="--ox:120px;--oy:640px;--t:9.4s;--d:-4.5s;--c:.35s;--g:2.2deg">
+        <path d="M96 640C104 520 160 380 258 292C312 244 372 196 442 150C418 214 372 286 316 354C262 420 200 520 158 640Z" fill="url(#gClara)"/>
+        <path d="M442 150C418 214 372 286 316 354C262 420 200 520 158 640C206 540 270 440 330 360C376 298 410 232 442 150Z" fill="#1f8a58" opacity=".28"/>
+        <path d="M120 640C190 470 300 300 440 152" stroke="#e6ffc0" stroke-width="2.6" fill="none" opacity=".55" stroke-linecap="round"/>
+        <g stroke="rgba(11,76,55,.22)" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M198 520Q184 516 170 505"/><path d="M198 520Q212 516 226 505"/><path d="M224 480Q211 476 198 466"/><path d="M224 480Q237 476 250 466"/><path d="M250 440Q238 436 225 426"/><path d="M250 440Q262 436 275 426"/><path d="M276 400Q265 396 253 387"/><path d="M276 400Q287 396 299 387"/><path d="M302 360Q292 356 281 347"/><path d="M302 360Q312 356 323 347"/><path d="M328 320Q318 316 309 308"/><path d="M328 320Q338 316 347 308"/><path d="M354 280Q345 276 337 268"/><path d="M354 280Q363 276 371 268"/><path d="M380 240Q372 236 364 229"/><path d="M380 240Q388 236 396 229"/><path d="M406 200Q399 196 392 189"/><path d="M406 200Q413 196 420 189"/></g>
+      </g>
+
+      <g class="fo" style="--ox:60px;--oy:640px;--t:6.2s;--d:-2s;--c:.5s;--g:2.6deg">
+        <path d="M86.8 576.6Q61.4 534.2 18.2 505.6Q43.6 548.0 86.8 576.6Z" fill="hsl(92 68% 51%)"/><path d="M86.8 576.6Q142.9 596.8 199.0 594.6Q142.9 574.4 86.8 576.6Z" fill="hsl(92 68% 42%)"/><path d="M98.0 554.9Q76.6 512.8 37.1 483.1Q58.5 525.2 98.0 554.9Z" fill="hsl(96 68% 47%)"/><path d="M98.0 554.9Q151.6 576.0 205.9 575.3Q152.3 554.2 98.0 554.9Z" fill="hsl(96 68% 38%)"/><path d="M76.4 598.9Q50.4 559.7 7.0 535.6Q32.9 574.8 76.4 598.9Z" fill="hsl(88 68% 45%)"/><path d="M76.4 598.9Q129.7 617.5 182.4 612.9Q129.1 594.4 76.4 598.9Z" fill="hsl(88 68% 36%)"/><path d="M110.2 533.8Q92.6 492.3 56.8 461.8Q74.4 503.3 110.2 533.8Z" fill="hsl(88 68% 54%)"/><path d="M110.2 533.8Q161.1 555.7 213.4 556.4Q162.4 534.5 110.2 533.8Z" fill="hsl(88 68% 45%)"/><path d="M123.2 513.3Q109.3 472.7 77.2 441.7Q91.1 482.3 123.2 513.3Z" fill="hsl(92 68% 50%)"/><path d="M123.2 513.3Q171.4 535.9 221.5 537.9Q173.3 515.3 123.2 513.3Z" fill="hsl(92 68% 41%)"/><path d="M137.1 493.4Q126.8 454.0 98.3 422.9Q108.6 462.3 137.1 493.4Z" fill="hsl(96 68% 56%)"/><path d="M137.1 493.4Q182.5 516.5 230.4 519.8Q184.9 496.6 137.1 493.4Z" fill="hsl(96 68% 47%)"/><path d="M151.9 474.1Q144.9 436.2 119.9 405.3Q126.8 443.2 151.9 474.1Z" fill="hsl(88 68% 52%)"/><path d="M151.9 474.1Q194.4 497.6 239.9 501.9Q197.4 478.4 151.9 474.1Z" fill="hsl(88 68% 43%)"/><path d="M167.6 455.5Q163.8 419.4 142.1 389.0Q145.9 425.1 167.6 455.5Z" fill="hsl(92 68% 58%)"/><path d="M167.6 455.5Q207.1 479.1 250.1 484.3Q210.6 460.7 167.6 455.5Z" fill="hsl(92 68% 49%)"/><path d="M184.2 437.6Q183.3 403.5 164.8 373.9Q165.7 408.0 184.2 437.6Z" fill="hsl(96 68% 54%)"/><path d="M184.2 437.6Q220.7 461.1 261.0 466.9Q224.5 443.4 184.2 437.6Z" fill="hsl(96 68% 45%)"/><path d="M201.7 420.2Q203.3 388.5 187.8 360.2Q186.1 391.9 201.7 420.2Z" fill="hsl(88 68% 61%)"/><path d="M201.7 420.2Q235.0 443.5 272.6 449.7Q239.3 426.5 201.7 420.2Z" fill="hsl(88 68% 52%)"/><path d="M220.1 403.6Q224.0 374.5 211.2 347.6Q207.3 376.7 220.1 403.6Z" fill="hsl(92 68% 57%)"/><path d="M220.1 403.6Q250.1 426.3 284.8 432.7Q254.8 410.0 220.1 403.6Z" fill="hsl(92 68% 48%)"/><path d="M239.4 387.6Q245.3 361.4 234.9 336.4Q229.0 362.6 239.4 387.6Z" fill="hsl(96 68% 63%)"/><path d="M239.4 387.6Q266.1 409.5 297.7 415.8Q271.0 394.0 239.4 387.6Z" fill="hsl(96 68% 54%)"/><path d="M259.7 372.3Q267.0 349.3 258.7 326.5Q251.4 349.5 259.7 372.3Z" fill="hsl(88 68% 59%)"/><path d="M259.7 372.3Q282.8 393.0 311.1 399.0Q288.0 378.2 259.7 372.3Z" fill="hsl(88 68% 50%)"/><path d="M280.8 357.7Q289.3 338.1 282.7 318.0Q274.2 337.5 280.8 357.7Z" fill="hsl(92 68% 65%)"/><path d="M280.8 357.7Q300.2 376.9 324.9 382.1Q305.6 362.9 280.8 357.7Z" fill="hsl(92 68% 56%)"/><path d="M303.0 343.7Q312.0 328.1 306.6 311.1Q297.6 326.7 303.0 343.7Z" fill="hsl(96 68% 61%)"/><path d="M303.0 343.7Q318.2 361.0 339.0 365.0Q323.8 347.7 303.0 343.7Z" fill="hsl(96 68% 52%)"/><path d="M326.0 330.5Q335.0 319.4 330.3 306.3Q321.3 317.4 326.0 330.5Z" fill="hsl(88 68% 68%)"/><path d="M326.0 330.5Q336.5 345.1 352.7 347.1Q342.2 332.5 326.0 330.5Z" fill="hsl(88 68% 59%)"/><path d="M350.0 318.0Q357.7 314.4 352.4 308.2Q344.7 311.8 350.0 318.0Z" fill="hsl(92 68% 64%)"/><path d="M350.0 318.0Q352.6 327.5 360.8 325.1Q358.3 315.6 350.0 318.0Z" fill="hsl(92 68% 55%)"/><path d="M60 640C110 500 205 390 350 318" stroke="#9be04a" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+      </g>
+
+      <g class="fo" style="--ox:110px;--oy:640px;--t:7s;--d:-5s;--c:.65s;--g:2.2deg">
+        <path d="M153.3 598.4Q155.9 557.9 138.3 520.7Q135.8 561.2 153.3 598.4Z" fill="hsl(104 68% 51%)"/><path d="M153.3 598.4Q193.1 632.7 240.5 648.2Q200.7 613.8 153.3 598.4Z" fill="hsl(104 68% 42%)"/><path d="M172.3 584.2Q178.7 545.9 165.5 509.1Q159.1 547.4 172.3 584.2Z" fill="hsl(108 68% 48%)"/><path d="M172.3 584.2Q208.9 619.2 253.7 636.4Q217.2 601.3 172.3 584.2Z" fill="hsl(108 68% 39%)"/><path d="M135.5 613.8Q134.8 575.0 113.7 541.4Q114.4 580.1 135.5 613.8Z" fill="hsl(100 68% 45%)"/><path d="M135.5 613.8Q174.4 645.1 220.1 656.6Q181.1 625.2 135.5 613.8Z" fill="hsl(100 68% 36%)"/><path d="M192.4 571.3Q202.3 535.5 193.1 499.5Q183.2 535.3 192.4 571.3Z" fill="hsl(100 68% 54%)"/><path d="M192.4 571.3Q225.6 606.6 267.8 625.2Q234.6 589.8 192.4 571.3Z" fill="hsl(100 68% 45%)"/><path d="M213.5 559.7Q226.4 526.7 220.9 492.0Q208.0 525.0 213.5 559.7Z" fill="hsl(104 68% 50%)"/><path d="M213.5 559.7Q243.4 595.1 282.8 614.6Q252.9 579.3 213.5 559.7Z" fill="hsl(104 68% 41%)"/><path d="M235.5 549.5Q251.0 519.5 248.9 486.5Q233.5 516.4 235.5 549.5Z" fill="hsl(108 68% 57%)"/><path d="M235.5 549.5Q262.1 584.5 298.7 604.8Q272.1 569.8 235.5 549.5Z" fill="hsl(108 68% 48%)"/><path d="M258.5 540.8Q276.0 514.0 276.9 482.9Q259.4 509.6 258.5 540.8Z" fill="hsl(100 68% 53%)"/><path d="M258.5 540.8Q281.9 575.0 315.6 595.7Q292.2 561.4 258.5 540.8Z" fill="hsl(100 68% 44%)"/><path d="M282.4 533.5Q301.3 510.1 304.7 481.2Q285.8 504.6 282.4 533.5Z" fill="hsl(104 68% 59%)"/><path d="M282.4 533.5Q302.5 566.7 333.3 587.3Q313.2 554.1 282.4 533.5Z" fill="hsl(104 68% 50%)"/><path d="M307.1 527.7Q326.9 507.8 332.3 481.4Q312.5 501.3 307.1 527.7Z" fill="hsl(108 68% 56%)"/><path d="M307.1 527.7Q324.0 559.5 351.9 579.7Q334.9 547.9 307.1 527.7Z" fill="hsl(108 68% 47%)"/><path d="M332.6 523.5Q352.7 507.1 359.6 483.4Q339.4 499.8 332.6 523.5Z" fill="hsl(100 68% 62%)"/><path d="M332.6 523.5Q346.4 553.4 371.3 572.9Q357.4 542.9 332.6 523.5Z" fill="hsl(100 68% 53%)"/><path d="M358.8 520.9Q378.6 508.1 386.4 487.2Q366.5 500.0 358.8 520.9Z" fill="hsl(104 68% 58%)"/><path d="M358.8 520.9Q369.6 548.6 391.5 566.8Q380.7 539.1 358.8 520.9Z" fill="hsl(104 68% 49%)"/><path d="M385.7 520.1Q404.6 510.7 412.5 492.7Q393.6 502.1 385.7 520.1Z" fill="hsl(108 68% 65%)"/><path d="M385.7 520.1Q393.6 545.0 412.5 561.3Q404.6 536.4 385.7 520.1Z" fill="hsl(108 68% 56%)"/><path d="M413.2 520.9Q430.3 514.9 437.7 500.0Q420.5 505.9 413.2 520.9Z" fill="hsl(100 68% 61%)"/><path d="M413.2 520.9Q418.3 542.4 434.2 556.3Q429.1 534.7 413.2 520.9Z" fill="hsl(100 68% 52%)"/><path d="M441.3 523.5Q455.7 521.0 461.4 509.1Q447.0 511.7 441.3 523.5Z" fill="hsl(104 68% 67%)"/><path d="M441.3 523.5Q443.4 540.7 456.1 551.0Q454.1 533.9 441.3 523.5Z" fill="hsl(104 68% 58%)"/><path d="M470.0 528.0Q478.4 529.9 479.3 522.4Q470.9 520.5 470.0 528.0Z" fill="hsl(108 68% 64%)"/><path d="M470.0 528.0Q467.8 537.2 476.0 540.3Q478.2 531.2 470.0 528.0Z" fill="hsl(108 68% 55%)"/><path d="M110 640C190 548 320 500 470 528" stroke="#9be04a" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+      </g>
+    </svg>
+    <div class="miolo">
+      <nav class="nav" aria-label="Topo">
+        <h1 class="logo"><img src="/static/marca/logo-claro.svg" alt="BemPlantado."></h1>
+        <div class="nav-dir">
+          <span class="selo-demo" id="selo-demo" hidden>Dados de demonstração</span>
+          <button class="btn btn-borda-clara" id="btn-notificar" type="button">Avisar no celular</button>
+        </div>
+      </nav>
+
+      <div class="hero-grade">
+        <div class="hero-texto">
+          <p class="eyebrow" id="hero-data">&nbsp;</p>
+          <h2 class="hero-titulo" id="hero-titulo">Um instante…</h2>
+          <p class="hero-sub" id="hero-sub"></p>
+          <div class="hero-acoes" id="hero-acoes"></div>
+          <div id="alertas" class="alertas" aria-live="polite"></div>
+        </div>
+
+        <div class="hero-visual">
+          <div class="cena" id="cena" aria-hidden="true"></div>
+          <div class="selo-redondo" id="selo-redondo" role="img" aria-label="Quantas plantas precisam de água hoje"></div>
+          <section class="cartao-agora" aria-labelledby="t-agora">
+            <p class="eyebrow eyebrow-escuro" id="t-agora">Agora no ambiente</p>
+            <div class="m" id="m-temp">
+              <span class="m-nome">Temperatura</span>
+              <span class="m-valor"><b id="v-temp">–</b><small>°C</small></span>
+              <span class="barra"><i id="b-temp"></i></span>
+              <span class="m-estado" id="e-temp"></span>
+            </div>
+            <div class="m" id="m-umid">
+              <span class="m-nome">Umidade do ar</span>
+              <span class="m-valor"><b id="v-umid">–</b><small>%</small></span>
+              <span class="barra"><i id="b-umid"></i></span>
+              <span class="m-estado" id="e-umid"></span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="faixa">
+    <p id="atualizado">Carregando…</p>
+  </div>
+
+  <main>
+    <section class="sec sec-escura" id="plantas" aria-labelledby="t-plantas">
+      <div class="miolo">
+        <div class="sec-cab">
+          <div>
+            <p class="eyebrow">Cuidados de hoje</p>
+            <h2 class="titulao" id="t-plantas">Minhas plantas<span class="ponto-lima"></span></h2>
+          </div>
+          <button class="btn btn-verde" id="btn-nova" type="button">+ Adicionar planta</button>
+        </div>
+        <div id="lista-plantas" class="plantas"></div>
+      </div>
+    </section>
+
+    <section class="sec sec-menta" aria-labelledby="t-prev">
+      <div class="miolo">
+        <div class="sec-cab">
+          <div>
+            <p class="eyebrow eyebrow-escuro">Previsão do tempo e regas</p>
+            <h2 class="titulao titulao-escuro" id="t-prev">Hoje e os próximos dias<span class="ponto-verde"></span></h2>
+          </div>
+          <p class="nota-escura"><span class="gota-nota" aria-hidden="true"></span>Toque num dia para ver o tempo dele</p>
+        </div>
+        <div id="previsao" class="previsao"></div>
+      </div>
+    </section>
+
+    <section class="sec sec-escura" aria-labelledby="t-hist">
+      <div class="miolo">
+        <div class="sec-cab">
+          <div>
+            <p class="eyebrow">Histórico</p>
+            <h2 class="titulao" id="t-hist">Como foi o ambiente<span class="ponto-lima"></span></h2>
+          </div>
+          <div class="filtros" role="group" aria-label="Período do gráfico">
+            <button type="button" class="filtro" data-horas="6">6 horas</button>
+            <button type="button" class="filtro ativo" data-horas="24">24 horas</button>
+            <button type="button" class="filtro" data-horas="168">7 dias</button>
+          </div>
+        </div>
+        <div class="graficos">
+          <figure class="grafico"><figcaption>Temperatura (°C)</figcaption><div id="g-temp"></div></figure>
+          <figure class="grafico"><figcaption>Umidade do ar (%)</figcaption><div id="g-umid"></div></figure>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="rodape">
+    <div class="miolo">
+      <img class="logo-rodape" src="/static/marca/logo-claro.svg" alt="BemPlantado.">
+      <p>Previsão do tempo: Open-Meteo · Cuidados da espécie: Trefle · Identificação por foto: Pl@ntNet</p>
+      <p>A caixinha mede a umidade do <em>ar</em>, não a da terra. Na dúvida, toque a terra com o dedo antes de regar.</p>
+    </div>
+  </footer>
+
+  <dialog id="dlg-nova" aria-labelledby="t-nova">
+    <form id="form-nova" method="dialog">
+      <div class="dlg-topo">
+        <h2 id="t-nova">Adicionar planta</h2>
+        <img class="mascote-dialogo" src="/static/mascote/prancheta.webp" alt="">
+      </div>
+
+      <div class="campo">
+        <label for="f-busca">Digite o nome da planta</label>
+        <input id="f-busca" type="search" autocomplete="off" maxlength="60" placeholder="Ex.: jiboia, samambaia, hortelã">
+        <p class="nota" id="foto-estado" aria-live="polite"></p>
+        <div id="sugestoes" class="sugestoes"></div>
+      </div>
+
+      <div class="campo">
+        <label for="f-grupo">Ou escolha o grupo da planta</label>
+        <select id="f-grupo"></select>
+      </div>
+
+      <div id="perfil" class="perfil" hidden></div>
+
+      <div class="campo">
+        <label for="f-apelido">Que nome você quer dar? <span class="obrig">(obrigatório)</span></label>
+        <input id="f-apelido" type="text" maxlength="80" placeholder="Ex.: Violeta da sala" required>
+      </div>
+      <div class="campo">
+        <label for="f-local">Onde ela fica?</label>
+        <select id="f-local">
+          <option value="interno">Dentro de casa</option>
+          <option value="externo">Varanda ou jardim (pega chuva)</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="f-dias">Quando você regou pela última vez?</label>
+        <select id="f-dias">
+          <option value="0">Hoje</option>
+          <option value="1">Ontem</option>
+          <option value="2">Há 2 dias</option>
+          <option value="3">Há 3 dias</option>
+          <option value="5">Há 5 dias</option>
+          <option value="7">Há uma semana</option>
+          <option value="14">Há duas semanas</option>
+        </select>
+      </div>
+
+      <p class="erro" id="erro-nova" role="alert" hidden></p>
+      <div class="acoes">
+        <button type="button" class="btn btn-claro" id="btn-cancelar">Cancelar</button>
+        <button type="submit" class="btn btn-verde" id="btn-salvar">Salvar planta</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    /* Abertura: tela branca, a logo aparece, a folha cresce e duas folhas grandes se abrem como cortina. Toque ou tecla para pular. */
+    (function () {
+      var ab = document.getElementById("abertura");
+      var html = document.documentElement;
+      if (!ab) { html.classList.remove("abrindo"); return; }
+      var reduz = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var feito = false;
+      function destravar() { html.classList.remove("abrindo"); }
+      function remover() { if (feito) return; feito = true; destravar(); ab.remove(); }
+      function pular() { ab.classList.add("pulando"); destravar(); setTimeout(remover, 320); }
+      function iniciar() {
+        if (ab.classList.contains("ligada")) return;
+        ab.classList.add("ligada");
+        if (!reduz) setTimeout(function () { ab.classList.add("aberta"); }, 2700);
+        setTimeout(destravar, reduz ? 700 : 2800);
+        setTimeout(remover, reduz ? 1500 : 3750);
+      }
+      var imgs = Array.prototype.slice.call(ab.querySelectorAll("img"));
+      var espera = Promise.all(imgs.map(function (i) { return i.decode ? i.decode().catch(function () {}) : Promise.resolve(); }));
+      Promise.race([espera, new Promise(function (ok) { setTimeout(ok, 1500); })]).then(iniciar);
+      ab.addEventListener("click", pular);
+      document.addEventListener("keydown", function (e) { if (!feito && (e.key === "Escape" || e.key === "Enter" || e.key === " ")) pular(); });
+    })();
+  </script>
+  <script src="/static/vendor/fullcalendar/index.global.min.js"></script>
+  <script src="/static/versoes/v3/app.js"></script>
+  <script type="module" src="/static/versoes/v3/cena3d.js"></script>
+  <script src="/static/versoes/v3/efeito3d.js" defer></script>
+</body>
+</html>

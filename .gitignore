@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+*.db
+instance/
+__pycache__/
+.venv/
+.claude/
+.vercel
+*.tar.gz
+referencia-professora/

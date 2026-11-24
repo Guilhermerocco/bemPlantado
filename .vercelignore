@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+*.db
+instance/
+__pycache__/
+.venv/
+.claude/
+*.docx
+docs/
+banco/
+testes/
+referencia-professora/
+bemplantado/simulador.py
+bemplantado/escutador.py

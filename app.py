@@ -1,1044 +1,401 @@
-from flask import Flask, Response, request
-from flask_sqlalchemy import SQLAlchemy
-try:
-    from flask_cors import CORS  # opcional: só é preciso quando o site chamar a API
-except ImportError:
-    CORS = None
-from sqlalchemy.exc import IntegrityError
-from werkzeug.security import generate_password_hash
-import paho.mqtt.client as mqtt
-from datetime import datetime, timezone
-import json
+"""BemPlantado. - API Flask + dashboard.
+
+Fluxo: caixinha -> MQTT -> ingestao.py -> banco -> esta API -> dashboard (static/).
+O dashboard só lê dados por /api/...; nunca acessa o banco direto.
+"""
+import hashlib
 import os
-import requests
+import secrets
+from datetime import date, datetime, timedelta, timezone
 
-app = Flask('bemPlantado')
-if CORS:
-    CORS(app)  # libera o site (Vercel, outro domínio) para chamar esta API
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True, "pool_recycle": 280}
+from dotenv import load_dotenv
+from flask import Flask, abort, jsonify, request, send_from_directory
 
-# Senha NÃO fica mais no código: defina a variável de ambiente DATABASE_URL.
-# Exemplo local: mysql+pymysql://root:SUA_SENHA@localhost/bemPlantado  (troque @ na senha por %40)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    'DATABASE_URL', 'mysql+pymysql://root:Guiguinho0@localhost/bemPlantado')
-# Limite de upload das fotos (a Pl@ntNet aceita até 5 imagens e 50 MB no total)
-app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
+load_dotenv()
 
-# Chaves das APIs de plantas: SEMPRE por variável de ambiente, nunca no código
-PLANTNET_API_KEY = os.environ.get('PLANTNET_API_KEY')
-TREFLE_TOKEN = os.environ.get('TREFLE_TOKEN')
-PLANTNET_URL = '2b1045txM8lVTMIf2RFLDrrxse'
-TREFLE_URL = 'usr-j4uNe5cQqaoYvYi7R1M7EgTek6snJkHz6ggDlEIEUFY'
-ORGAOS_VALIDOS = {'auto', 'leaf', 'flower', 'fruit', 'bark'}
-EXTENSOES_FOTO = {'jpg', 'jpeg', 'png'}
+from bemplantado import servicos  # noqa: E402
+from bemplantado.contas import bp as contas_bp, exige_login, usuario_logado  # noqa: E402
+from bemplantado.fontes import fonte_gravada, iniciar_fonte, sincronizar_simulada  # noqa: E402
+from bemplantado.grupos import buscar_por_nome, grupo_dict, semear_grupos  # noqa: E402
+from bemplantado.models import Configuracao, GrupoPlanta, Planta, Registro, Rega, agora_utc, db, iso_utc  # noqa: E402
+from sqlalchemy import inspect, text  # noqa: E402
+from bemplantado.recomendacao import LIMITE_DADOS_ANTIGOS_MIN, ambiente, calcular_rega  # noqa: E402
 
-MQTT_BROKER = os.environ.get('MQTT_BROKER', 'test.mosquitto.org')
-MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
-# Confirme com o professor/caixa qual é o tópico real (GrupoX parece ser um modelo)
-MQTT_TOPIC = os.environ.get('MQTT_TOPIC', 'projeto_integrado/SENAI134/Cienciadedados/grupoX')
-
-mybd = SQLAlchemy(app)
+LIMITE_PADRAO = 1000
+LIMITE_MAXIMO = 5000
 
 
-class Usuario(mybd.Model):
-    __tablename__ = 'usuario'
-    id = mybd.Column(mybd.Integer, primary_key=True)
-    nome = mybd.Column(mybd.String(120))
-    cpf = mybd.Column(mybd.String(11))
-    email = mybd.Column(mybd.String(255))
-    telefone = mybd.Column(mybd.String(20))
-    senha_hash = mybd.Column(mybd.String(255))
-    criado_em = mybd.Column(mybd.DateTime)
-
-    def to_json(self):
-        return{
-            "id": self.id,
-            "nome": self.nome,
-            "cpf": self.cpf,
-            "email": self.email,
-            "telefone": self.telefone,
-            "criado_em": str(self.criado_em)
-        }
+def _parse_data(texto, padrao):
+    """Converte ISO 8601 (com ou sem 'Z') para UTC sem fuso. Retorna `padrao` se vazio."""
+    if not texto:
+        return padrao
+    dt = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+    if dt.tzinfo:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
-class GrupoPlanta(mybd.Model):
-    __tablename__ = 'grupo_planta'
-    id = mybd.Column(mybd.Integer, primary_key=True)
-    nome = mybd.Column(mybd.String(80))
-    exemplos = mybd.Column(mybd.String(255))
-    temp_min = mybd.Column(mybd.Float)
-    temp_max = mybd.Column(mybd.Float)
-    umid_min = mybd.Column(mybd.Float)
-    umid_max = mybd.Column(mybd.Float)
-    intervalo_rega_dias = mybd.Column(mybd.Integer)
-    dica_base = mybd.Column(mybd.Text)
-
-    def to_json(self):
-        return{
-            "id": self.id,
-            "nome": self.nome,
-            "exemplos": self.exemplos,
-            "temp_min": self.temp_min,
-            "temp_max": self.temp_max,
-            "umid_min": self.umid_min,
-            "umid_max": self.umid_max,
-            "intervalo_rega_dias": self.intervalo_rega_dias,
-            "dica_base": self.dica_base
-        }
+def _local():
+    return float(os.getenv("LATITUDE", "-23.55")), float(os.getenv("LONGITUDE", "-46.63"))
 
 
-class Favorito(mybd.Model):
-    __tablename__ = 'favorito'
-    usuario_id = mybd.Column(mybd.Integer, primary_key=True)
-    grupo_id = mybd.Column(mybd.Integer, primary_key=True)
-    criado_em = mybd.Column(mybd.DateTime)
-
-    def to_json(self):
-        return{
-            "usuario_id": self.usuario_id,
-            "grupo_id": self.grupo_id,
-            "criado_em": str(self.criado_em)
-        }
+BASE = os.path.dirname(os.path.abspath(__file__))
+NA_VERCEL = bool(os.getenv("VERCEL"))
 
 
-class Registro(mybd.Model):
-    __tablename__ = 'registro'
-    id = mybd.Column(mybd.Integer, primary_key=True)
-    temperature = mybd.Column(mybd.Float)
-    pressure = mybd.Column(mybd.Float)
-    altitude = mybd.Column(mybd.Float)
-    humidity = mybd.Column(mybd.Float)
-    CO2 = mybd.Column(mybd.Float)
-    particula1 = mybd.Column(mybd.Float)
-    particula2 = mybd.Column(mybd.Float)
-    registro_tempo = mybd.Column(mybd.DateTime, unique=True)
-
-    def to_json(self):
-        return{
-            "id": self.id,
-            "temperature": self.temperature,
-            "pressure": self.pressure,
-            "altitude": self.altitude,
-            "humidity": self.humidity,
-            "CO2": self.CO2,
-            "particula1": self.particula1,
-            "particula2": self.particula2,
-            "registro_tempo": str(self.registro_tempo)
-        }
+def _url_banco():
+    """DATABASE_URL, ou SQLite local. Na Vercel o único disco gravável é /tmp (some a cada instância)."""
+    url = os.getenv("DATABASE_URL") or ("sqlite:////tmp/bemplantado.db" if NA_VERCEL
+                                         else "sqlite:///bemplantado.db")
+    for antigo in ("postgres://", "postgresql://"):  # usa o driver psycopg 3
+        if url.startswith(antigo):
+            url = "postgresql+psycopg://" + url[len(antigo):]
+    if NA_VERCEL and "pooler.supabase.com:5432" in url:
+        # Serverless abre muitas instâncias ao mesmo tempo; o modo "session" do pooler do Supabase tem poucas conexões (erro 500).
+        # O modo "transaction" (porta 6543) aguenta muito mais clientes.
+        url = url.replace("pooler.supabase.com:5432", "pooler.supabase.com:6543")
+    return url
 
 
-class Insight(mybd.Model):
-    __tablename__ = 'insight'
-    id = mybd.Column(mybd.Integer, primary_key=True)
-    grupo_id = mybd.Column(mybd.Integer)
-    registro_id = mybd.Column(mybd.Integer)
-    texto = mybd.Column(mybd.Text)
-    modelo = mybd.Column(mybd.String(60))
-    criado_em = mybd.Column(mybd.DateTime)
-
-    def to_json(self):
-        return{
-            "id": self.id,
-            "grupo_id": self.grupo_id,
-            "registro_id": self.registro_id,
-            "texto": self.texto,
-            "modelo": self.modelo,
-            "criado_em": str(self.criado_em)
-        }
+def _opcoes_motor(url):
+    """Postgres atrás do pooler: sem prepared statements (modo transaction) e poucas conexões por instância."""
+    if url.startswith("postgresql"):
+        return {"connect_args": {"prepare_threshold": None}, "pool_size": 1, "max_overflow": 2, "pool_pre_ping": True, "pool_recycle": 240}
+    return {}
 
 
-class Identificacao(mybd.Model):
-    __tablename__ = 'identificacao'
-    id = mybd.Column(mybd.Integer, primary_key=True)
-    usuario_id = mybd.Column(mybd.Integer)
-    grupo_id = mybd.Column(mybd.Integer)
-    nome_cientifico = mybd.Column(mybd.String(255))
-    nome_comum = mybd.Column(mybd.String(255))
-    familia = mybd.Column(mybd.String(120))
-    genero = mybd.Column(mybd.String(120))
-    confianca = mybd.Column(mybd.Float)
-    trefle_id = mybd.Column(mybd.Integer)
-    analise = mybd.Column(mybd.Text)   # JSON com o resultado da análise
-    criado_em = mybd.Column(mybd.DateTime)
+def _migrar():
+    """Bancos criados antes dos grupos: acrescenta a coluna planta.grupo_id (não apaga nada)."""
+    insp = inspect(db.engine)
+    if "grupo_planta" in insp.get_table_names():  # modelo do projeto: dica_base, exemplos, umid_max
+        cols = {c["name"] for c in insp.get_columns("grupo_planta")}
+        if "cuidados_gerais" in cols and "dica_base" not in cols:
+            db.session.execute(text("ALTER TABLE grupo_planta RENAME COLUMN cuidados_gerais TO dica_base"))
+        if "exemplos" not in cols:
+            db.session.execute(text("ALTER TABLE grupo_planta ADD COLUMN exemplos VARCHAR(255)"))
+        if "umid_max" not in cols:
+            db.session.execute(text("ALTER TABLE grupo_planta ADD COLUMN umid_max FLOAT"))
+        for extra in ("como_reconhecer", "onde_cultivadas"):  # textos da tabela de grupos que o DDL enxuto do grupo não traz
+            if extra not in cols:
+                db.session.execute(text(f"ALTER TABLE grupo_planta ADD COLUMN {extra} TEXT"))
+        db.session.commit()
+    if db.engine.dialect.name == "postgresql":
+        # Supabase: tabela sem RLS fica aberta na API pública. Liga o RLS só nas que ainda NÃO têm (o app conecta como dono e não é afetado).
+        # Só mexe se faltar: o ALTER TABLE pede trava exclusiva, e fazê-lo a cada partida travaria/derrubaria instâncias simultâneas.
+        sem_rls = db.session.execute(text(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity")).scalars().all()
+        for tabela in sem_rls:
+            db.session.execute(text(f'ALTER TABLE "{tabela}" ENABLE ROW LEVEL SECURITY'))
+        db.session.commit()
+    if "planta" in insp.get_table_names():
+        colunas = {c["name"] for c in insp.get_columns("planta")}
+        if "grupo_id" not in colunas:
+            db.session.execute(text("ALTER TABLE planta ADD COLUMN grupo_id INTEGER"))
+            db.session.commit()
+        if "usuario_id" not in colunas:  # contas: cada planta passa a ter dona (vazio = planta de demonstração)
+            db.session.execute(text("ALTER TABLE planta ADD COLUMN usuario_id INTEGER REFERENCES usuario (id) ON DELETE CASCADE"))
+            db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_planta_usuario_id ON planta (usuario_id)"))
+            db.session.commit()
 
-    def to_json(self):
-        try:
-            analise = json.loads(self.analise) if self.analise else None
-        except ValueError:
-            analise = self.analise
-        return{
-            "id": self.id,
-            "usuario_id": self.usuario_id,
-            "grupo_id": self.grupo_id,
-            "nome_cientifico": self.nome_cientifico,
-            "nome_comum": self.nome_comum,
-            "familia": self.familia,
-            "genero": self.genero,
-            "confianca": self.confianca,
-            "trefle_id": self.trefle_id,
-            "analise": analise,
-            "criado_em": str(self.criado_em)
-        }
+
+def _nova_planta(grupo, apelido, ambiente, dias_desde_rega, nome_popular=None, nome_cientifico=None):
+    """Cria a planta copiando os valores de referência do grupo."""
+    return Planta(
+        grupo_id=grupo.id, apelido=apelido, nome_popular=nome_popular, nome_cientifico=nome_cientifico,
+        ambiente=ambiente, intervalo_rega_dias=grupo.intervalo_rega_dias, temp_min=grupo.temp_min,
+        temp_max=grupo.temp_max, umid_min=grupo.umid_min, dica=(grupo.cuidados_gerais or "")[:300],
+        fonte_dados=f"Grupo: {grupo.nome}", ultima_rega=date.today() - timedelta(days=dias_desde_rega))
 
 
-# ********************* CONEXÃO SENSORES *********************************
-
-mqtt_data = {}
-# Status para diagnóstico (veja GET /status)
-mqtt_status = {"conectado": False, "topico": MQTT_TOPIC, "broker": MQTT_BROKER,
-               "mensagens_recebidas": 0, "registros_salvos": 0,
-               "ultima_mensagem": None, "ultimo_erro": None}
-
-def on_connect(client, userdata, flags, rc, properties=None):
-    # rc: 0 = sucesso; outro valor = erro. (Assinatura compatível com paho-mqtt 2.x)
-    print("Conectado ao broker, código " + str(rc))
-    mqtt_status["conectado"] = (rc == 0)
-    client.subscribe(MQTT_TOPIC)  # re-inscreve sempre que reconectar
-    print("Inscrito no tópico:", MQTT_TOPIC)
-
-def on_disconnect(client, userdata, *args):
-    mqtt_status["conectado"] = False
-    print("Desconectado do broker; o paho tenta reconectar sozinho")
-
-def on_message(client, userdata, msg):
-    global mqtt_data
-    mqtt_status["mensagens_recebidas"] += 1
-    try:
-        payload = msg.payload.decode('utf-8')
-        mqtt_data = json.loads(payload)
-    except Exception as e:
-        mqtt_status["ultimo_erro"] = f"Payload não é JSON: {e}"
-        print(mqtt_status["ultimo_erro"], msg.payload[:200])
+def _semear_plantas():
+    """Plantas de exemplo quando o banco está vazio (útil na demonstração)."""
+    if Planta.query.count():
         return
+    for apelido, grupo, popular, local, dias in [
+        ("Violeta da sala", "Flores ornamentais", "Violeta", "interno", 2),
+        ("Samambaia da varanda", "Samambaias e avencas", "Samambaia-americana", "externo", 1),
+        ("Babosa da janela", "Suculentas", "Babosa", "interno", 4),
+    ]:
+        g = GrupoPlanta.query.filter_by(nome=grupo).first()
+        db.session.add(_nova_planta(g, apelido, local, dias, nome_popular=popular))
+    db.session.commit()
 
-    mqtt_status["ultima_mensagem"] = mqtt_data
-    print(f"Mensagem recebida em {msg.topic}: {mqtt_data}")
 
-    # Adiciona o contexto da aplicação para a manipulação do banco de dados
-    with app.app_context():
+def _versao_do_banco():
+    """Muda quando o esquema (models.py) ou os textos dos 15 grupos (grupos.py) mudam; se mexer só em _migrar, aumente o número do "v3" (assim o banco é preparado de novo, uma vez)."""
+    with open(os.path.join(BASE, "bemplantado", "grupos.py"), "rb") as f1, open(os.path.join(BASE, "bemplantado", "models.py"), "rb") as f2:
+        return "v4-" + hashlib.md5(f1.read() + f2.read()).hexdigest()[:10]
+
+
+def _preparar_banco():
+    """Cria/atualiza tabelas e grupos. Pula tudo se o banco já foi preparado nesta versão (1 consulta só)."""
+    versao = _versao_do_banco()
+    try:
+        atual = db.session.execute(text("SELECT valor FROM configuracao WHERE chave = 'esquema_versao'")).scalar()
+    except Exception:  # tabela ainda não existe
+        db.session.rollback()
+        atual = None
+    if atual == versao:
+        return
+    db.create_all()
+    _migrar()
+    semear_grupos()  # os 15 grupos de plantas (criados ou atualizados)
+    if os.getenv("SEMEAR_PLANTAS", "1" if NA_VERCEL else "0") == "1":
+        _semear_plantas()
+    cfg = db.session.get(Configuracao, "esquema_versao")
+    if cfg:
+        cfg.valor = versao
+    else:
+        db.session.add(Configuracao(chave="esquema_versao", valor=versao))
+    db.session.commit()
+
+
+def criar_app(com_fonte=False):
+    app = Flask(__name__, static_folder=os.path.join(BASE, "static"), static_url_path="/static")
+    app.config["SQLALCHEMY_DATABASE_URI"] = _url_banco()
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = _opcoes_motor(app.config["SQLALCHEMY_DATABASE_URI"])
+    app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # fotos até 8 MB
+    # Contas: sessão em cookie assinado. SECRET_KEY precisa ser a MESMA em todas as instâncias (na Vercel, defina em Environment Variables).
+    chave = os.getenv("SECRET_KEY")
+    if not chave:
+        chave = secrets.token_hex(32)
+        print("[CONTAS] SECRET_KEY não definida: usando uma chave temporária (as pessoas saem da conta a cada reinício). Defina SECRET_KEY no .env.")
+    app.config.update(SECRET_KEY=chave, SESSION_COOKIE_NAME="bp_sessao", SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                      SESSION_COOKIE_SECURE=NA_VERCEL or os.getenv("COOKIE_SECURE") == "1", PERMANENT_SESSION_LIFETIME=timedelta(days=30))
+    app.register_blueprint(contas_bp)
+    db.init_app(app)
+
+    # Na Vercel cada requisição pode cair numa instância nova. Páginas e arquivos (/static) NÃO precisam do banco,
+    # então ele só é preparado na primeira chamada de /api/ de cada instância (antes, 20 arquivos ao mesmo tempo
+    # abriam 20 conexões e o Supabase respondia erro 500). Fora da Vercel, prepara na partida, como sempre.
+    estado = {"pronto": False}
+
+    def garantir_banco():
+        if estado["pronto"]:
+            return
+        with app.app_context():
+            _preparar_banco()
+            if com_fonte:
+                iniciar_fonte(app)  # simulada, mqtt ou nenhuma (FONTE_DADOS no .env)
+        estado["pronto"] = True
+
+    if not NA_VERCEL:
+        garantir_banco()
+
+    @app.before_request
+    def completar_leituras_simuladas():
+        if request.path.startswith("/api/"):
+            garantir_banco()
+            # só faz algo no modo serverless com fonte simulada (nos demais, retorna na hora)
+            sincronizar_simulada(app)
+
+    @app.errorhandler(servicos.ServicoIndisponivel)
+    def servico_fora(exc):
+        return jsonify(erro=str(exc)), 503
+
+    @app.errorhandler(413)
+    def foto_grande(_):
+        return jsonify(erro="A foto é grande demais (máximo 8 MB)."), 413
+
+    # ------------------------------------------------------------ páginas
+    @app.get("/")
+    def index():
+        return send_from_directory(app.static_folder, "index.html")
+
+    @app.get("/v1")
+    def versao_1():  # primeira versão com calendário, guardada para comparar
+        return send_from_directory(os.path.join(app.static_folder, "versoes", "v1"), "index.html")
+
+    @app.get("/v2")
+    def versao_2():  # segunda versão (cena 3D + calendário do mês na semana de hoje), guardada para comparar
+        return send_from_directory(os.path.join(app.static_folder, "versoes", "v2"), "index.html")
+
+    @app.get("/v3")
+    def versao_3():  # terceira versão (mascote em formato de ovo, 3D nos botões e cards), guardada para comparar
+        return send_from_directory(os.path.join(app.static_folder, "versoes", "v3"), "index.html")
+
+    @app.get("/identidade")
+    def identidade():
+        return send_from_directory(os.path.join(app.static_folder, "paginas"), "identidade.html")
+
+    @app.get("/pitch")
+    def pitch():
+        return send_from_directory(os.path.join(app.static_folder, "paginas"), "pitch.html")
+
+    @app.get("/realista")
+    def realista():
+        return send_from_directory(os.path.join(app.static_folder, "paginas"), "realista.html")
+
+    @app.get("/api/saude")
+    def saude():
+        return jsonify(status="ok", fonte_dados=fonte_gravada(),
+                       demonstracao=fonte_gravada() == "simulada",
+                       plantnet=bool(os.getenv("PLANTNET_API_KEY")),
+                       trefle=bool(os.getenv("TREFLE_TOKEN")))
+
+    # ------------------------------------------------------------ sensor
+    @app.get("/api/registros")
+    def registros():
+        """?inicio=ISO&fim=ISO&limite=N  (padrão: últimas 24 h, em ordem crescente)."""
         try:
-            temperatura = mqtt_data.get('temperature')
-            pressao = mqtt_data.get('pressure')
-            altitude = mqtt_data.get('altitude')
-            umidade = mqtt_data.get('humidity')
-            co2 = mqtt_data.get('CO2')
-            poeira1 = mqtt_data.get('particula1')
-            poeira2 = mqtt_data.get('particula2')
-            timestamp_unix = mqtt_data.get('timestamp')
-
-            # Converte timestamp Unix para datetime (UTC, sem fuso, que é o que o DATETIME do MySQL guarda).
-            # Se a caixa não mandar timestamp, usa a hora do servidor em vez de descartar a leitura.
-            try:
-                if timestamp_unix is None:
-                    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
-                else:
-                    ts = float(timestamp_unix)
-                    if ts > 1e12:  # veio em milissegundos
-                        ts = ts / 1000
-                    timestamp = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
-            except (ValueError, TypeError) as e:
-                mqtt_status["ultimo_erro"] = f"Erro ao converter timestamp: {e}"
-                print(mqtt_status["ultimo_erro"])
-                return
-
-            # Cria o objeto Registro com os dados
-            new_data = Registro(
-                temperature=temperatura,
-                pressure=pressao,
-                altitude=altitude,
-                humidity=umidade,
-                CO2=co2,
-                particula1=poeira1,
-                particula2=poeira2,
-                registro_tempo=timestamp
-            )
-
-            # Adiciona o novo registro ao banco de dados
-            mybd.session.add(new_data)
-            mybd.session.commit()
-            mqtt_status["registros_salvos"] += 1
-            print("Dados inseridos no banco de dados com sucesso")
-
-        except IntegrityError:
-            # registro_tempo é UNIQUE: a mesma leitura chegou duas vezes
-            mybd.session.rollback()
-            print("Leitura repetida (mesmo timestamp), ignorada")
-        except Exception as e:
-            mqtt_status["ultimo_erro"] = f"Erro ao salvar no banco: {e}"
-            print(mqtt_status["ultimo_erro"])
-            mybd.session.rollback()
-
-try:  # paho-mqtt 2.x
-    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-except AttributeError:  # paho-mqtt 1.x
-    mqtt_client = mqtt.Client()
-mqtt_client.on_connect = on_connect
-mqtt_client.on_disconnect = on_disconnect
-mqtt_client.on_message = on_message
-
-def start_mqtt():
-    # connect_async: se o broker estiver fora, a API sobe mesmo assim e fica tentando
-    mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, 60)
-    mqtt_client.loop_start()
-
-# ---------------------------- DIAGNÓSTICO ----------------------------
-
-@app.route("/status", methods=["GET"])
-def status():
-    try:
-        total = Registro.query.count()
-        ultimo = Registro.query.order_by(Registro.id.desc()).first()
-        banco = {"ok": True, "total_registros": total,
-                 "ultimo_registro": ultimo.to_json() if ultimo else None}
-    except Exception as e:
-        banco = {"ok": False, "erro": str(e)}
-    return gera_resposta(200, "status", {"mqtt": mqtt_status, "banco": banco})
-
-@app.route("/registros/ultimo", methods=["GET"])
-def ultimo_registro():
-    ultimo = Registro.query.order_by(Registro.registro_tempo.desc()).first()
-    if not ultimo:
-        return gera_resposta(404, "registros", {}, "Nenhum registro ainda")
-    return gera_resposta(200, "registros", ultimo.to_json())
-
-# CONTEUDO
-
-# ---------------------------- USUARIO ----------------------------
-
-@app.route("/usuarios", methods = ["GET"])
-def selecionar_usuario():
-    usuario_objeto = Usuario.query.all()
-    usuario_json = [usuario.to_json() for usuario in usuario_objeto]
-    return gera_resposta(200, "usuarios", usuario_json)
-
-@app.route("/usuarios/<id>", methods=["GET"])
-def usuario_por_id(id):
-    usuario_objeto = Usuario.query.filter_by(id=id).first()
-    usuario_json = usuario_objeto.to_json()
-    return gera_resposta(200, "usuarios", usuario_json)
-
-@app.route("/usuarios", methods=["POST"])
-def cria_usuarios():
-    novo = request.get_json()
-
-    try:
-        usuario = Usuario(
-            nome = novo["nome"],
-            cpf = novo["cpf"],
-            email = novo["email"],
-            telefone = novo["telefone"],
-            senha_hash = generate_password_hash(novo["senha"]),
-            criado_em = datetime.now()
-        )
-
-        mybd.session.add(usuario)
-        mybd.session.commit()
-
-        return gera_resposta(201, "usuarios", usuario.to_json(), "criado com sucesso!")
-    except Exception as e:
-        print("Erro", e)
-        return gera_resposta(400, "usuarios", {}, "Alguma coisa de errado aconteceu!")
-
-@app.route("/usuarios/<id>", methods=["PUT"])
-def atualizar_usuario(id):
-    usuario_objeto = Usuario.query.filter_by(id=id).first()
-    body = request.get_json()
-    try:
-        if 'nome' in body:
-            usuario_objeto.nome = body['nome']
-        if 'cpf' in body:
-            usuario_objeto.cpf = body['cpf']
-        if 'email' in body:
-            usuario_objeto.email = body['email']
-        if 'telefone' in body:
-            usuario_objeto.telefone = body['telefone']
-        if 'senha' in body:
-            usuario_objeto.senha_hash = generate_password_hash(body['senha'])
-
-        mybd.session.add(usuario_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'usuarios', usuario_objeto.to_json(), "Atualizado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'usuarios', {}, "Erro ao atualizar")
-
-@app.route("/usuarios/<id>", methods=["DELETE"])
-def deleta_usuario(id):
-    usuario_objeto = Usuario.query.filter_by(id=id).first()
-
-    try:
-        mybd.session.delete(usuario_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'usuarios', usuario_objeto.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'usuarios', {}, "Erro ao deletar")
-
-# ------------------------- GRUPO_PLANTA --------------------------
-
-@app.route("/grupos_planta", methods = ["GET"])
-def selecionar_grupo():
-    grupo_objeto = GrupoPlanta.query.all()
-    grupo_json = [grupo.to_json() for grupo in grupo_objeto]
-    return gera_resposta(200, "grupos_planta", grupo_json)
-
-@app.route("/grupos_planta/<id>", methods=["GET"])
-def grupo_por_id(id):
-    grupo_objeto = GrupoPlanta.query.filter_by(id=id).first()
-    grupo_json = grupo_objeto.to_json()
-    return gera_resposta(200, "grupos_planta", grupo_json)
-
-@app.route("/grupos_planta", methods=["POST"])
-def cria_grupos():
-    novo = request.get_json()
-
-    try:
-        grupo = GrupoPlanta(
-            nome = novo["nome"],
-            exemplos = novo["exemplos"],
-            temp_min = novo["temp_min"],
-            temp_max = novo["temp_max"],
-            umid_min = novo["umid_min"],
-            umid_max = novo["umid_max"],
-            intervalo_rega_dias = novo["intervalo_rega_dias"],
-            dica_base = novo["dica_base"]
-        )
-
-        mybd.session.add(grupo)
-        mybd.session.commit()
-
-        return gera_resposta(201, "grupos_planta", grupo.to_json(), "criado com sucesso!")
-    except Exception as e:
-        print("Erro", e)
-        return gera_resposta(400, "grupos_planta", {}, "Alguma coisa de errado aconteceu!")
-
-@app.route("/grupos_planta/<id>", methods=["PUT"])
-def atualizar_grupo(id):
-    grupo_objeto = GrupoPlanta.query.filter_by(id=id).first()
-    body = request.get_json()
-    try:
-        if 'nome' in body:
-            grupo_objeto.nome = body['nome']
-        if 'exemplos' in body:
-            grupo_objeto.exemplos = body['exemplos']
-        if 'temp_min' in body:
-            grupo_objeto.temp_min = body['temp_min']
-        if 'temp_max' in body:
-            grupo_objeto.temp_max = body['temp_max']
-        if 'umid_min' in body:
-            grupo_objeto.umid_min = body['umid_min']
-        if 'umid_max' in body:
-            grupo_objeto.umid_max = body['umid_max']
-        if 'intervalo_rega_dias' in body:
-            grupo_objeto.intervalo_rega_dias = body['intervalo_rega_dias']
-        if 'dica_base' in body:
-            grupo_objeto.dica_base = body['dica_base']
-
-        mybd.session.add(grupo_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'grupos_planta', grupo_objeto.to_json(), "Atualizado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'grupos_planta', {}, "Erro ao atualizar")
-
-@app.route("/grupos_planta/<id>", methods=["DELETE"])
-def deleta_grupo(id):
-    grupo_objeto = GrupoPlanta.query.filter_by(id=id).first()
-
-    try:
-        mybd.session.delete(grupo_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'grupos_planta', grupo_objeto.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'grupos_planta', {}, "Erro ao deletar")
-
-# ---------------------------- FAVORITO ---------------------------
-
-@app.route("/favoritos", methods = ["GET"])
-def selecionar_favorito():
-    favorito_objeto = Favorito.query.all()
-    favorito_json = [favorito.to_json() for favorito in favorito_objeto]
-    return gera_resposta(200, "favoritos", favorito_json)
-
-@app.route("/favoritos/<usuario_id>/<grupo_id>", methods=["GET"])
-def favorito_por_id(usuario_id, grupo_id):
-    favorito_objeto = Favorito.query.filter_by(usuario_id=usuario_id, grupo_id=grupo_id).first()
-    favorito_json = favorito_objeto.to_json()
-    return gera_resposta(200, "favoritos", favorito_json)
-
-@app.route("/favoritos", methods=["POST"])
-def cria_favoritos():
-    novo = request.get_json()
-
-    try:
-        favorito = Favorito(
-            usuario_id = novo["usuario_id"],
-            grupo_id = novo["grupo_id"],
-            criado_em = datetime.now()
-        )
-
-        mybd.session.add(favorito)
-        mybd.session.commit()
-
-        return gera_resposta(201, "favoritos", favorito.to_json(), "criado com sucesso!")
-    except Exception as e:
-        print("Erro", e)
-        return gera_resposta(400, "favoritos", {}, "Alguma coisa de errado aconteceu!")
-
-@app.route("/favoritos/<usuario_id>/<grupo_id>", methods=["DELETE"])
-def deleta_favorito(usuario_id, grupo_id):
-    favorito_objeto = Favorito.query.filter_by(usuario_id=usuario_id, grupo_id=grupo_id).first()
-
-    try:
-        mybd.session.delete(favorito_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'favoritos', favorito_objeto.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'favoritos', {}, "Erro ao deletar")
-
-# ---------------------------- REGISTRO ---------------------------
-
-@app.route("/registros", methods = ["GET"])
-def selecionar_registro():
-    registro_objeto = Registro.query.all()
-    registro_json = [registro.to_json() for registro in registro_objeto]
-    return gera_resposta(200, "registros", registro_json)
-
-@app.route("/registros/<id>", methods=["GET"])
-def registro_por_id(id):
-    registro_objeto = Registro.query.filter_by(id=id).first()
-    registro_json = registro_objeto.to_json()
-    return gera_resposta(200, "registros", registro_json)
-
-@app.route("/registros", methods=["POST"])
-def cria_registros():
-    novo = request.get_json()
-
-    try:
-        registro = Registro(
-            temperature = novo["temperature"],
-            pressure = novo["pressure"],
-            altitude = novo["altitude"],
-            humidity = novo["humidity"],
-            CO2 = novo["CO2"],
-            particula1 = novo["particula1"],
-            particula2 = novo["particula2"],
-            registro_tempo = novo["registro_tempo"]
-        )
-
-        mybd.session.add(registro)
-        mybd.session.commit()
-
-        return gera_resposta(201, "registros", registro.to_json(), "criado com sucesso!")
-    except Exception as e:
-        print("Erro", e)
-        return gera_resposta(400, "registros", {}, "Alguma coisa de errado aconteceu!")
-
-@app.route("/registros/<id>", methods=["PUT"])
-def atualizar_registro(id):
-    registro_objeto = Registro.query.filter_by(id=id).first()
-    body = request.get_json()
-    try:
-        if 'temperature' in body:
-            registro_objeto.temperature = body['temperature']
-        if 'pressure' in body:
-            registro_objeto.pressure = body['pressure']
-        if 'altitude' in body:
-            registro_objeto.altitude = body['altitude']
-        if 'humidity' in body:
-            registro_objeto.humidity = body['humidity']
-        if 'CO2' in body:
-            registro_objeto.CO2 = body['CO2']
-        if 'particula1' in body:
-            registro_objeto.particula1 = body['particula1']
-        if 'particula2' in body:
-            registro_objeto.particula2 = body['particula2']
-        if 'registro_tempo' in body:
-            registro_objeto.registro_tempo = body['registro_tempo']
-
-        mybd.session.add(registro_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'registros', registro_objeto.to_json(), "Atualizado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'registros', {}, "Erro ao atualizar")
-
-@app.route("/registros/<id>", methods=["DELETE"])
-def deleta_registro(id):
-    registro_objeto = Registro.query.filter_by(id=id).first()
-
-    try:
-        mybd.session.delete(registro_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'registros', registro_objeto.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'registros', {}, "Erro ao deletar")
-
-# ---------------------------- INSIGHT ----------------------------
-
-@app.route("/insights", methods = ["GET"])
-def selecionar_insight():
-    insight_objeto = Insight.query.all()
-    insight_json = [insight.to_json() for insight in insight_objeto]
-    return gera_resposta(200, "insights", insight_json)
-
-@app.route("/insights/<id>", methods=["GET"])
-def insight_por_id(id):
-    insight_objeto = Insight.query.filter_by(id=id).first()
-    insight_json = insight_objeto.to_json()
-    return gera_resposta(200, "insights", insight_json)
-
-@app.route("/insights", methods=["POST"])
-def cria_insights():
-    novo = request.get_json()
-
-    try:
-        insight = Insight(
-            grupo_id = novo["grupo_id"],
-            registro_id = novo["registro_id"],
-            texto = novo["texto"],
-            modelo = novo["modelo"],
-            criado_em = datetime.now()
-        )
-
-        mybd.session.add(insight)
-        mybd.session.commit()
-
-        return gera_resposta(201, "insights", insight.to_json(), "criado com sucesso!")
-    except Exception as e:
-        print("Erro", e)
-        return gera_resposta(400, "insights", {}, "Alguma coisa de errado aconteceu!")
-
-@app.route("/insights/<id>", methods=["PUT"])
-def atualizar_insight(id):
-    insight_objeto = Insight.query.filter_by(id=id).first()
-    body = request.get_json()
-    try:
-        if 'grupo_id' in body:
-            insight_objeto.grupo_id = body['grupo_id']
-        if 'registro_id' in body:
-            insight_objeto.registro_id = body['registro_id']
-        if 'texto' in body:
-            insight_objeto.texto = body['texto']
-        if 'modelo' in body:
-            insight_objeto.modelo = body['modelo']
-
-        mybd.session.add(insight_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'insights', insight_objeto.to_json(), "Atualizado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'insights', {}, "Erro ao atualizar")
-
-@app.route("/insights/<id>", methods=["DELETE"])
-def deleta_insight(id):
-    insight_objeto = Insight.query.filter_by(id=id).first()
-
-    try:
-        mybd.session.delete(insight_objeto)
-        mybd.session.commit()
-
-        return gera_resposta(200, 'insights', insight_objeto.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        print('Erro', e)
-        return gera_resposta(400, 'insights', {}, "Erro ao deletar")
-
-# ============================ PLANTAS (Pl@ntNet + Trefle) ============================
-# Pl@ntNet: identifica a espécie pela foto.  Trefle: traz os dados de cultivo da espécie.
-# A análise cruza a faixa ideal da planta com a última leitura dos sensores (tabela registro).
-
-class ErroAPI(Exception):
-    def __init__(self, status, mensagem):
-        super().__init__(mensagem)
-        self.status = status
-        self.mensagem = mensagem
-
-
-def identificar_plantnet(fotos, orgaos):
-    """fotos: lista de (nome_arquivo, bytes, mimetype). Devolve o JSON da Pl@ntNet."""
-    if not PLANTNET_API_KEY:
-        raise ErroAPI(500, "PLANTNET_API_KEY não configurada no servidor")
-    arquivos = [('images', (nome, conteudo, tipo)) for nome, conteudo, tipo in fotos]
-    try:
-        resp = requests.post(
-            PLANTNET_URL,
-            params={'api-key': PLANTNET_API_KEY, 'lang': 'pt', 'nb-results': 3},
-            files=arquivos,
-            data={'organs': orgaos},
-            timeout=40)
-    except requests.RequestException as e:
-        raise ErroAPI(502, f"Não foi possível falar com a Pl@ntNet: {e}")
-
-    if resp.status_code == 404:
-        raise ErroAPI(404, "Nenhuma planta reconhecida na foto. Tente uma foto mais próxima da folha ou flor.")
-    if resp.status_code in (401, 403):
-        raise ErroAPI(502, "Chave da Pl@ntNet inválida ou sem permissão")
-    if resp.status_code == 429:
-        raise ErroAPI(429, "Limite diário de identificações da Pl@ntNet atingido")
-    if resp.status_code != 200:
-        raise ErroAPI(502, f"Pl@ntNet respondeu {resp.status_code}: {resp.text[:200]}")
-    return resp.json()
-
-
-def _trefle_get(caminho, **params):
-    """GET na Trefle com 2 tentativas (ela às vezes demora). Devolve o JSON ou None."""
-    params['token'] = TREFLE_TOKEN
-    for tentativa in (1, 2):
+            fim = _parse_data(request.args.get("fim"), agora_utc())
+            inicio = _parse_data(request.args.get("inicio"), fim - timedelta(hours=24))
+            limite = min(int(request.args.get("limite", LIMITE_PADRAO)), LIMITE_MAXIMO)
+        except ValueError:
+            return jsonify(erro="Parâmetros inválidos. Use datas ISO 8601 e limite numérico."), 400
+        if inicio > fim:
+            return jsonify(erro="'inicio' deve ser anterior a 'fim'."), 400
+
+        linhas = (Registro.query
+                  .filter(Registro.registro_tempo >= inicio, Registro.registro_tempo <= fim)
+                  .order_by(Registro.registro_tempo.asc()).limit(20000).all())
+        total = len(linhas)
+        if total > limite:  # reduz a amostra de forma uniforme para o gráfico
+            passo = -(-total // limite)
+            linhas = linhas[::passo]
+        return jsonify(total=total, inicio=iso_utc(inicio), fim=iso_utc(fim),
+                       registros=[r.to_dict() for r in linhas])
+
+    @app.get("/api/registros/ultimo")
+    def ultimo():
+        r = Registro.query.order_by(Registro.registro_tempo.desc()).first()
+        if r is None:
+            return jsonify(registro=None, idade_minutos=None, desatualizado=True)
+        idade = (agora_utc() - r.registro_tempo).total_seconds() / 60
+        return jsonify(registro=r.to_dict(), idade_minutos=round(idade),
+                       desatualizado=idade > LIMITE_DADOS_ANTIGOS_MIN)
+
+    @app.get("/api/mqtt/status")
+    def mqtt_status():
+        """Situação da ligação com o broker MQTT: conectado, tópico e contadores de mensagens."""
+        from bemplantado.ingestao import ESTADO
+        return jsonify(fonte_dados=fonte_gravada(), **ESTADO)
+
+    # ------------------------------------------------------------ tempo
+    @app.get("/api/previsao")
+    def previsao():
+        lat, lon = _local()
+        return jsonify(latitude=lat, longitude=lon, dias=servicos.previsao_tempo(lat, lon))
+
+    # ------------------------------------------------------------ grupos de plantas
+    @app.get("/api/grupos")
+    def listar_grupos():
+        return jsonify([grupo_dict(g) for g in GrupoPlanta.query.order_by(GrupoPlanta.id).all()])
+
+    @app.get("/api/grupos/buscar")
+    def buscar_grupos():
+        """?q=nome  -> grupos cujo exemplo (nome popular) ou nome começa com o texto."""
+        return jsonify(resultados=buscar_por_nome((request.args.get("q") or "").strip()))
+
+    @app.get("/api/referencia-botanica")
+    def referencia_botanica():
+        """?q=nome -> informação extra do Trefle (não define cuidados). {} quando não houver."""
+        nome = (request.args.get("q") or "").strip()
+        return jsonify(servicos.referencia_botanica(nome) if len(nome) >= 2 else {})
+
+    @app.post("/api/identificar")
+    def identificar():
+        arquivo = request.files.get("imagem")
+        if not arquivo:
+            return jsonify(erro="Envie uma foto da planta."), 400
+        if not (arquivo.mimetype or "").startswith("image/"):
+            return jsonify(erro="O arquivo precisa ser uma imagem."), 400
+        resultados = servicos.identificar_planta(arquivo.read(), arquivo.filename, arquivo.mimetype)
+        return jsonify(resultados=resultados)
+
+    # ------------------------------------------------------------ plantas
+    def _situacao():
+        leitura = Registro.query.order_by(Registro.registro_tempo.desc()).first()
         try:
-            r = requests.get(f"{TREFLE_URL}{caminho}", params=params, timeout=30)
-            if r.status_code == 200:
-                return r.json()
-            print(f"Trefle {caminho} respondeu {r.status_code}: {r.text[:200]}")
-            if r.status_code in (401, 403, 404):
-                return None
-        except (requests.RequestException, ValueError) as e:
-            print(f"Trefle {caminho} tentativa {tentativa} falhou: {e}")
-    return None
+            lat, lon = _local()
+            prev = servicos.previsao_tempo(lat, lon)
+        except servicos.ServicoIndisponivel:
+            prev = None
+        return leitura, prev
 
-
-def buscar_trefle(nome_cientifico):
-    """Procura a espécie na Trefle. Devolve o JSON completo da espécie ou None."""
-    if not TREFLE_TOKEN or not nome_cientifico:
-        return None
-    nome = nome_cientifico.strip()
-    alvo = nome.lower()
-
-    itens = []
-    # 1) filtro exato por nome científico  2) busca de texto  3) busca só pelo gênero
-    for caminho, params in (
-        ("/species", {"filter[scientific_name]": nome}),
-        ("/species/search", {"q": nome}),
-        ("/species/search", {"q": nome.split()[0]}),
-    ):
-        dados = _trefle_get(caminho, **params)
-        itens = (dados or {}).get('data') or []
-        if itens:
-            break
-    if not itens:
-        print(f"Trefle: nada encontrado para '{nome}'")
-        return None
-
-    escolhido = next((i for i in itens if (i.get('scientific_name') or '').lower() == alvo), itens[0])
-    detalhe = _trefle_get(f"/species/{escolhido['id']}")
-    return (detalhe or {}).get('data') or escolhido
-
-
-def _graus(valor):
-    # A Trefle manda temperatura como {"deg_c": x, "deg_f": y}
-    if isinstance(valor, dict):
-        return valor.get('deg_c')
-    return valor
-
-
-def resumir_trefle(especie):
-    """Pega só o que interessa para o site."""
-    if not especie:
-        return None
-    growth = especie.get('growth') or {}
-    spec = especie.get('specifications') or {}
-    return {
-        "trefle_id": especie.get('id'),
-        "nome_cientifico": especie.get('scientific_name'),
-        "nome_comum": especie.get('common_name'),
-        "familia": especie.get('family'),
-        "imagem": especie.get('image_url'),
-        "comestivel": especie.get('edible'),
-        "toxicidade": spec.get('toxicity'),
-        "crescimento": {
-            "temp_min_c": _graus(growth.get('minimum_temperature')),
-            "temp_max_c": _graus(growth.get('maximum_temperature')),
-            "umidade_ar_0a10": growth.get('atmospheric_humidity'),
-            "luz_0a10": growth.get('light'),
-            "umidade_solo_0a10": growth.get('soil_humidity'),
-            "ph_min": growth.get('ph_minimum'),
-            "ph_max": growth.get('ph_maximum'),
+    def _planta_dict(p, leitura, prev):
+        return {
+            "id": p.id, "apelido": p.apelido, "nome_popular": p.nome_popular,
+            "nome_cientifico": p.nome_cientifico, "ambiente_local": p.ambiente,
+            "grupo_id": p.grupo_id, "grupo": p.grupo.nome if p.grupo else None,
+            "intervalo_rega_dias": p.intervalo_rega_dias,
+            "temp_min": p.temp_min, "temp_max": p.temp_max, "umid_min": p.umid_min,
+            "dica": p.dica, "fonte_dados": p.fonte_dados,
+            "rega": calcular_rega(p, leitura, prev),
+            "ambiente": ambiente(p, leitura),
         }
-    }
 
+    @app.get("/api/plantas")
+    def listar_plantas():
+        leitura, prev = _situacao()
+        u = usuario_logado()
+        # logada: só as plantas dela; visitante: as plantas de demonstração (sem dona)
+        consulta = Planta.query.filter(Planta.usuario_id == u.id) if u else Planta.query.filter(Planta.usuario_id.is_(None))
+        plantas = consulta.order_by(Planta.apelido).all()
+        return jsonify(plantas=[_planta_dict(p, leitura, prev) for p in plantas],
+                       previsao_disponivel=prev is not None, demonstracao=u is None)
 
-def encontrar_grupo(nome_comum, genero, familia):
-    """Tenta achar um grupo_planta cadastrado cujos 'exemplos' citem a planta."""
-    termos = [t.lower() for t in (nome_comum, genero, familia) if t]
-    if not termos:
-        return None
-    for grupo in GrupoPlanta.query.all():
-        exemplos = (grupo.exemplos or '').lower()
-        if any(t in exemplos for t in termos):
-            return grupo
-    return None
+    def _planta_da_conta(planta_id):
+        u = usuario_logado()
+        planta = db.session.get(Planta, planta_id)
+        if planta is None or planta.usuario_id != u.id:
+            abort(404)
+        return planta
 
-
-def _comparar(valor, minimo, maximo, unidade, nome):
-    if valor is None or minimo is None or maximo is None:
-        return {"status": "sem_dados", "mensagem": f"Sem dados suficientes de {nome}"}
-    if valor < minimo:
-        return {"status": "abaixo", "atual": valor, "ideal": [minimo, maximo],
-                "mensagem": f"{nome.capitalize()} de {valor}{unidade} está abaixo do ideal ({minimo}–{maximo}{unidade})"}
-    if valor > maximo:
-        return {"status": "acima", "atual": valor, "ideal": [minimo, maximo],
-                "mensagem": f"{nome.capitalize()} de {valor}{unidade} está acima do ideal ({minimo}–{maximo}{unidade})"}
-    return {"status": "ok", "atual": valor, "ideal": [minimo, maximo],
-            "mensagem": f"{nome.capitalize()} de {valor}{unidade} está dentro do ideal"}
-
-
-def gerar_analise(resumo_trefle, grupo, registro):
-    """Cruza a faixa ideal (grupo cadastrado > Trefle) com a última leitura dos sensores."""
-    cresc = (resumo_trefle or {}).get('crescimento') or {}
-
-    # Faixa de temperatura: prioriza o grupo cadastrado por vocês; senão usa a Trefle
-    if grupo and grupo.temp_min is not None and grupo.temp_max is not None:
-        t_min, t_max, fonte_temp = grupo.temp_min, grupo.temp_max, "grupo_planta"
-    else:
-        t_min, t_max, fonte_temp = cresc.get('temp_min_c'), cresc.get('temp_max_c'), "trefle"
-
-    # Faixa de umidade do ar: grupo cadastrado; senão converte a escala 0–10 da Trefle (estimativa)
-    if grupo and grupo.umid_min is not None and grupo.umid_max is not None:
-        u_min, u_max, fonte_umid = grupo.umid_min, grupo.umid_max, "grupo_planta"
-    elif cresc.get('umidade_ar_0a10') is not None:
-        centro = cresc['umidade_ar_0a10'] * 10
-        u_min, u_max, fonte_umid = max(0, centro - 15), min(100, centro + 15), "trefle_estimado"
-    else:
-        u_min = u_max = None
-        fonte_umid = None
-
-    temp_atual = registro.temperature if registro else None
-    umid_atual = registro.humidity if registro else None
-
-    analise = {
-        "leitura_usada": registro.to_json() if registro else None,
-        "temperatura": dict(_comparar(temp_atual, t_min, t_max, "°C", "temperatura"), fonte=fonte_temp),
-        "umidade": dict(_comparar(umid_atual, u_min, u_max, "%", "umidade do ar"), fonte=fonte_umid),
-        "dicas": []
-    }
-
-    if grupo:
-        analise["grupo"] = {"id": grupo.id, "nome": grupo.nome}
-        if grupo.intervalo_rega_dias:
-            analise["dicas"].append(f"Regar a cada {grupo.intervalo_rega_dias} dia(s)")
-        if grupo.dica_base:
-            analise["dicas"].append(grupo.dica_base)
-
-    luz = cresc.get('luz_0a10')
-    if luz is not None:
-        if luz >= 7:
-            analise["dicas"].append("Gosta de bastante sol direto")
-        elif luz >= 4:
-            analise["dicas"].append("Prefere luz indireta ou meia-sombra")
-        else:
-            analise["dicas"].append("Tolera pouca luz; evite sol forte")
-    if cresc.get('ph_min') is not None and cresc.get('ph_max') is not None:
-        analise["dicas"].append(f"pH do solo ideal entre {cresc['ph_min']} e {cresc['ph_max']}")
-    toxic = (resumo_trefle or {}).get('toxicidade')
-    if toxic not in (None, 'none'):
-        nivel = {'low': 'baixa', 'medium': 'média', 'high': 'alta'}.get(toxic, toxic)
-        analise["dicas"].append(f"Atenção: toxicidade {nivel} (cuidado com pets e crianças)")
-
-    if not registro:
-        analise["aviso"] = "Ainda não há leitura dos sensores para comparar"
-    return analise
-
-
-@app.route("/plantas/identificar", methods=["POST"])
-def identificar_planta():
-    """
-    multipart/form-data:
-      imagens     -> 1 a 5 fotos (jpg/png), campo repetido
-      orgaos      -> opcional, um por foto: auto | leaf | flower | fruit | bark
-      usuario_id  -> opcional
-      grupo_id    -> opcional (se não vier, tenta achar pelo nome)
-      salvar      -> opcional, "false" para não gravar no banco
-    """
-    imagens = request.files.getlist('imagens') or request.files.getlist('imagem')
-    imagens = [f for f in imagens if f and f.filename]
-    if not imagens:
-        return gera_resposta(400, "identificacao", {}, "Envie pelo menos uma foto no campo 'imagens'")
-    if len(imagens) > 5:
-        return gera_resposta(400, "identificacao", {}, "Máximo de 5 fotos por identificação")
-
-    fotos = []
-    for f in imagens:
-        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
-        if ext not in EXTENSOES_FOTO:
-            return gera_resposta(400, "identificacao", {}, f"Formato não aceito: {f.filename} (use jpg ou png)")
-        fotos.append((f.filename, f.read(), f.mimetype or 'image/jpeg'))
-
-    orgaos = [o.lower() for o in request.form.getlist('orgaos') if o]
-    if not orgaos:
-        orgaos = ['auto'] * len(fotos)
-    if len(orgaos) != len(fotos) or any(o not in ORGAOS_VALIDOS for o in orgaos):
-        return gera_resposta(400, "identificacao", {}, "Envie um 'orgaos' válido por foto (auto, leaf, flower, fruit, bark)")
-
-    try:
-        resultado = identificar_plantnet(fotos, orgaos)
-    except ErroAPI as e:
-        return gera_resposta(e.status, "identificacao", {}, e.mensagem)
-
-    candidatos = []
-    for r in (resultado.get('results') or [])[:3]:
-        esp = r.get('species') or {}
-        candidatos.append({
-            "nome_cientifico": esp.get('scientificNameWithoutAuthor'),
-            "nomes_comuns": esp.get('commonNames') or [],
-            "familia": (esp.get('family') or {}).get('scientificNameWithoutAuthor'),
-            "genero": (esp.get('genus') or {}).get('scientificNameWithoutAuthor'),
-            "confianca": round(r.get('score', 0), 4),
-        })
-    if not candidatos:
-        return gera_resposta(404, "identificacao", {}, "Nenhuma planta reconhecida na foto")
-
-    melhor = candidatos[0]
-    nome_comum = melhor["nomes_comuns"][0] if melhor["nomes_comuns"] else None
-
-    resumo = resumir_trefle(buscar_trefle(melhor["nome_cientifico"]))
-    if resumo and not nome_comum:
-        nome_comum = resumo.get('nome_comum')
-
-    grupo = None
-    grupo_id = request.form.get('grupo_id', type=int)
-    if grupo_id:
-        grupo = GrupoPlanta.query.get(grupo_id)
-    if not grupo:
-        grupo = encontrar_grupo(nome_comum, melhor["genero"], melhor["familia"])
-
-    registro = Registro.query.order_by(Registro.registro_tempo.desc()).first()
-    analise = gerar_analise(resumo, grupo, registro)
-
-    corpo = {
-        "planta": {
-            "nome_cientifico": melhor["nome_cientifico"],
-            "nome_comum": nome_comum,
-            "familia": melhor["familia"],
-            "genero": melhor["genero"],
-            "confianca": melhor["confianca"],
-        },
-        "candidatos": candidatos,
-        "trefle": resumo,
-        "analise": analise,
-        "identificacoes_restantes_hoje": resultado.get('remainingIdentificationRequests'),
-    }
-
-    if melhor["confianca"] < 0.2:
-        corpo["aviso"] = "Confiança baixa: tente outra foto, mais nítida e de perto"
-
-    if request.form.get('salvar', 'true').lower() != 'false':
+    @app.post("/api/plantas")
+    @exige_login
+    def criar_planta():
+        d = request.get_json(silent=True) or {}
+        apelido = (d.get("apelido") or "").strip()[:80]
+        if not apelido:
+            return jsonify(erro="Dê um nome para a sua planta."), 400
+        local = d.get("ambiente", "interno")
+        if local not in ("interno", "externo"):
+            return jsonify(erro="Ambiente deve ser 'interno' ou 'externo'."), 400
         try:
-            ident = Identificacao(
-                usuario_id=request.form.get('usuario_id', type=int),
-                grupo_id=grupo.id if grupo else None,
-                nome_cientifico=melhor["nome_cientifico"],
-                nome_comum=nome_comum,
-                familia=melhor["familia"],
-                genero=melhor["genero"],
-                confianca=melhor["confianca"],
-                trefle_id=resumo.get('trefle_id') if resumo else None,
-                analise=json.dumps(analise, ensure_ascii=False, default=str),
-                criado_em=datetime.now()
-            )
-            mybd.session.add(ident)
-            mybd.session.commit()
-            corpo["id"] = ident.id
-        except Exception as e:
-            mybd.session.rollback()
-            print("Erro ao salvar identificação:", e)
-            corpo["aviso_banco"] = "Identificado, mas não foi possível salvar no banco"
+            dias = int(d.get("dias_desde_rega", 0))
+        except (TypeError, ValueError):
+            return jsonify(erro="Dias desde a última rega inválido."), 400
+        dias = max(0, min(dias, 60))
 
-    return gera_resposta(200, "identificacao", corpo)
+        try:
+            grupo = db.session.get(GrupoPlanta, int(d.get("grupo_id")))
+        except (TypeError, ValueError):
+            grupo = None
+        if grupo is None:
+            return jsonify(erro="Escolha o grupo da planta."), 400
+        popular = (d.get("nome_popular") or "").strip()[:120] or None
+        cientifico = (d.get("nome_cientifico") or "").strip()[:160] or None
+        planta = _nova_planta(grupo, apelido, local, dias, popular, cientifico)
+        planta.usuario_id = usuario_logado().id
+        db.session.add(planta)
+        db.session.commit()
+        leitura, prev = _situacao()
+        return jsonify(_planta_dict(planta, leitura, prev)), 201
 
+    @app.post("/api/plantas/<int:planta_id>/regar")
+    @exige_login
+    def regar(planta_id):
+        planta = _planta_da_conta(planta_id)
+        planta.ultima_rega = date.today()
+        db.session.add(Rega(planta_id=planta.id, data=planta.ultima_rega))
+        db.session.commit()
+        leitura, prev = _situacao()
+        return jsonify(_planta_dict(planta, leitura, prev))
 
-@app.route("/plantas/info", methods=["GET"])
-def info_planta():
-    """GET /plantas/info?nome=Ficus lyrata  -> dados de cultivo da Trefle"""
-    nome = request.args.get('nome', '').strip()
-    if not nome:
-        return gera_resposta(400, "planta", {}, "Informe ?nome=<nome científico>")
-    if not TREFLE_TOKEN:
-        return gera_resposta(500, "planta", {}, "TREFLE_TOKEN não configurado no servidor")
-    resumo = resumir_trefle(buscar_trefle(nome))
-    if not resumo:
-        return gera_resposta(404, "planta", {}, "Planta não encontrada na Trefle")
-    return gera_resposta(200, "planta", resumo)
+    @app.delete("/api/plantas/<int:planta_id>")
+    @exige_login
+    def remover(planta_id):
+        planta = _planta_da_conta(planta_id)
+        db.session.delete(planta)
+        db.session.commit()
+        return "", 204
 
-
-@app.route("/plantas/analise/<id>", methods=["GET"])
-def reanalisar(id):
-    """Refaz a análise de uma identificação salva usando a leitura MAIS RECENTE dos sensores."""
-    ident = Identificacao.query.filter_by(id=id).first()
-    if not ident:
-        return gera_resposta(404, "analise", {}, "Identificação não encontrada")
-    resumo = resumir_trefle(buscar_trefle(ident.nome_cientifico))
-    grupo = GrupoPlanta.query.get(ident.grupo_id) if ident.grupo_id else None
-    registro = Registro.query.order_by(Registro.registro_tempo.desc()).first()
-    analise = gerar_analise(resumo, grupo, registro)
-    return gera_resposta(200, "analise", {"identificacao_id": ident.id,
-                                          "nome_cientifico": ident.nome_cientifico,
-                                          "analise": analise})
+    return app
 
 
-@app.route("/identificacoes", methods=["GET"])
-def selecionar_identificacao():
-    """GET /identificacoes  (opcional ?usuario_id=1)"""
-    consulta = Identificacao.query
-    usuario_id = request.args.get('usuario_id', type=int)
-    if usuario_id:
-        consulta = consulta.filter_by(usuario_id=usuario_id)
-    itens = consulta.order_by(Identificacao.criado_em.desc()).all()
-    return gera_resposta(200, "identificacoes", [i.to_json() for i in itens])
+app = criar_app(com_fonte=True)
 
-
-@app.route("/identificacoes/<id>", methods=["GET"])
-def identificacao_por_id(id):
-    ident = Identificacao.query.filter_by(id=id).first()
-    if not ident:
-        return gera_resposta(404, "identificacoes", {}, "Identificação não encontrada")
-    return gera_resposta(200, "identificacoes", ident.to_json())
-
-
-@app.route("/identificacoes/<id>", methods=["DELETE"])
-def deleta_identificacao(id):
-    ident = Identificacao.query.filter_by(id=id).first()
-    if not ident:
-        return gera_resposta(404, "identificacoes", {}, "Identificação não encontrada")
-    try:
-        mybd.session.delete(ident)
-        mybd.session.commit()
-        return gera_resposta(200, "identificacoes", ident.to_json(), "Deletado com sucesso!!!")
-    except Exception as e:
-        mybd.session.rollback()
-        print('Erro', e)
-        return gera_resposta(400, "identificacoes", {}, "Erro ao deletar")
-
-
-@app.errorhandler(413)
-def arquivo_grande(e):
-    return gera_resposta(413, "identificacao", {}, "Fotos grandes demais (máximo 25 MB no total)")
-
-
-def gera_resposta(status, nome_conteudo, conteudo, mensagem=False):
-    body = {}
-    body[nome_conteudo] = conteudo
-
-    if(mensagem):
-        body["mensagem"] = mensagem
-
-    return Response(json.dumps(body, ensure_ascii=False, default=str), status=status, mimetype="application/json")
-
-
-if __name__ == '__main__':  # Verifica se este arquivo está sendo executado como o programa principal.
-    with app.app_context():  # Cria um contexto de aplicativo Flask para executar a criação do banco de dados.
-        # mybd.create_all()  # Chama o método 'create_all' para criar todas as tabelas definidas no modelo do banco de dados.
-
-        start_mqtt()  # Chama a função 'start_mqtt', que presumivelmente inicia um cliente MQTT (protocolo de mensagens para dispositivos).
-        port = int(os.environ.get("PORT", 8080))  # Azure define a porta automaticamente
-        app.run(host='0.0.0.0', port=port)  # Ouvir em todas as interfaces e usar a porta fornecida pela Azure
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), use_reloader=False)

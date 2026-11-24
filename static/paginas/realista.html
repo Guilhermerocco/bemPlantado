@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BemPlantado. · versão realista</title>
+  <meta name="description" content="Acompanhe suas plantas: quando regar e a previsão dos próximos dias.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%231a7a3e'/%3E%3Ctext x='29' y='47' text-anchor='middle' font-family='Arial Black,Arial' font-weight='900' font-size='42' fill='white'%3EB%3C/text%3E%3Ccircle cx='47' cy='44' r='5' fill='white'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Baloo+2:wght@800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/realista.css">
+</head>
+<body data-tema="realista">
+  <div class="fundo" aria-hidden="true"></div>
+  <a class="pular" href="#plantas">Ir para as minhas plantas</a>
+
+  <div class="pagina">
+    <header class="vidro topo">
+      <h1 class="logo">BemPlantado<span class="ponto"></span></h1>
+      <nav class="links" aria-label="Seções">
+        <a href="#plantas">Minhas plantas</a>
+        <a href="#semana">A semana</a>
+        <a href="#historico">Histórico</a>
+      </nav>
+      <div class="nav-dir">
+        <span class="selo-demo" id="selo-demo" hidden>Dados de demonstração</span>
+        <button class="btn btn-borda-clara" id="btn-notificar" type="button">Avisar no celular</button>
+      </div>
+    </header>
+
+    <section class="vidro hero" aria-labelledby="hero-titulo">
+      <div class="hero-texto">
+        <p class="eyebrow" id="hero-data">&nbsp;</p>
+        <h2 class="hero-titulo" id="hero-titulo">Um instante…</h2>
+        <p class="hero-sub" id="hero-sub"></p>
+        <div class="hero-acoes" id="hero-acoes"></div>
+        <div id="alertas" class="alertas" aria-live="polite"></div>
+        <p class="atualizado" id="atualizado">Carregando…</p>
+      </div>
+
+      <div class="hero-foto">
+        <img src="/static/fotos/monstera-gotas.webp" alt="" width="787" height="1400">
+        <section class="cartao-agora" aria-labelledby="t-agora">
+          <p class="eyebrow" id="t-agora">Agora no ambiente</p>
+          <div class="m" id="m-temp">
+            <span class="m-nome">Temperatura</span>
+            <span class="m-valor"><b id="v-temp">–</b><small>°C</small></span>
+            <span class="barra"><i id="b-temp"></i></span>
+            <span class="m-estado" id="e-temp"></span>
+          </div>
+          <div class="m" id="m-umid">
+            <span class="m-nome">Umidade do ar</span>
+            <span class="m-valor"><b id="v-umid">–</b><small>%</small></span>
+            <span class="barra"><i id="b-umid"></i></span>
+            <span class="m-estado" id="e-umid"></span>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <main class="coluna">
+      <section class="vidro bloco" id="plantas" aria-labelledby="t-plantas">
+        <div class="bloco-cab">
+          <div>
+            <p class="eyebrow">Cuidados de hoje</p>
+            <h2 id="t-plantas">Minhas plantas</h2>
+          </div>
+          <button class="btn btn-lima" id="btn-nova" type="button">+ Adicionar planta</button>
+        </div>
+        <div id="lista-plantas" class="plantas"></div>
+      </section>
+
+      <section class="vidro bloco" id="semana" aria-labelledby="t-prev">
+        <div class="bloco-cab">
+          <div>
+            <p class="eyebrow">Previsão do tempo</p>
+            <h2 id="t-prev">A semana</h2>
+          </div>
+          <p class="nota">Etiqueta branca = dia de regar</p>
+        </div>
+        <div id="previsao" class="previsao"></div>
+      </section>
+
+      <section class="vidro bloco" id="historico" aria-labelledby="t-hist">
+        <div class="bloco-cab">
+          <div>
+            <p class="eyebrow">Histórico</p>
+            <h2 id="t-hist">Como foi o ambiente</h2>
+          </div>
+          <div class="filtros" role="group" aria-label="Período do gráfico">
+            <button type="button" class="filtro" data-horas="6">6 horas</button>
+            <button type="button" class="filtro ativo" data-horas="24">24 horas</button>
+            <button type="button" class="filtro" data-horas="168">7 dias</button>
+          </div>
+        </div>
+        <div class="graficos">
+          <figure class="grafico"><figcaption>Temperatura (°C)</figcaption><div id="g-temp"></div></figure>
+          <figure class="grafico"><figcaption>Umidade do ar (%)</figcaption><div id="g-umid"></div></figure>
+        </div>
+      </section>
+    </main>
+
+    <footer class="vidro rodape">
+      <p>Previsão do tempo: Open-Meteo · Cuidados da espécie: Trefle · Identificação por foto: Pl@ntNet</p>
+      <p>A caixinha mede a umidade do <em>ar</em>, não a da terra. Na dúvida, toque a terra com o dedo antes de regar.</p>
+      <p><a href="/">Ver a versão em desenho</a></p>
+    </footer>
+  </div>
+
+  <dialog id="dlg-nova" aria-labelledby="t-nova">
+    <form id="form-nova" method="dialog">
+      <h2 id="t-nova">Adicionar planta</h2>
+
+      <div class="campo">
+        <label for="f-busca">Digite o nome da planta</label>
+        <input id="f-busca" type="search" autocomplete="off" maxlength="60" placeholder="Ex.: jiboia, samambaia, hortelã">
+        <p class="nota" id="foto-estado" aria-live="polite"></p>
+        <div id="sugestoes" class="sugestoes"></div>
+      </div>
+
+      <div class="campo">
+        <label for="f-grupo">Ou escolha o grupo da planta</label>
+        <select id="f-grupo"></select>
+      </div>
+
+      <div id="perfil" class="perfil" hidden></div>
+
+      <div class="campo">
+        <label for="f-apelido">Que nome você quer dar? <span class="obrig">(obrigatório)</span></label>
+        <input id="f-apelido" type="text" maxlength="80" placeholder="Ex.: Violeta da sala" required>
+      </div>
+      <div class="campo">
+        <label for="f-local">Onde ela fica?</label>
+        <select id="f-local">
+          <option value="interno">Dentro de casa</option>
+          <option value="externo">Varanda ou jardim (pega chuva)</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label for="f-dias">Quando você regou pela última vez?</label>
+        <select id="f-dias">
+          <option value="0">Hoje</option>
+          <option value="1">Ontem</option>
+          <option value="2">Há 2 dias</option>
+          <option value="3">Há 3 dias</option>
+          <option value="5">Há 5 dias</option>
+          <option value="7">Há uma semana</option>
+          <option value="14">Há duas semanas</option>
+        </select>
+      </div>
+
+      <p class="erro" id="erro-nova" role="alert" hidden></p>
+      <div class="acoes">
+        <button type="button" class="btn btn-claro" id="btn-cancelar">Cancelar</button>
+        <button type="submit" class="btn btn-verde" id="btn-salvar">Salvar planta</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
